@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Taskflow",
+    "description": "Persistent task trees, selective nested sessions and direct-parent completion notifications.",
+    "detail": "docs/DETAIL.md"
+  }
+}

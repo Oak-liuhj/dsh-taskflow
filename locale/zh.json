@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "智能任务编排",
+    "description": "持久层级计划、按需递归子会话与直接父任务完成通知。",
+    "detail": "docs/DETAIL.zh-CN.md"
+  }
+}
