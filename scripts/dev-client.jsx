@@ -1,3 +1,4 @@
+import packageInfo from '../package.json';
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { apply } from '../src/client/index.jsx';
@@ -36,7 +37,7 @@ function App() {
         <div className="composer"><div className="suggestions"><button onClick={() => setText('查看进度')}>查看进度</button><button onClick={() => tool('browser')}>验收：打开网页</button><button onClick={() => tool('terminal')}>验收：终端输出</button></div>{error && <p role="alert">{error}</p>}<form className="composer-card" onSubmit={send}><textarea aria-label="发送任务消息" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(e); } }} placeholder="向 DeepSeek 发送消息"/><div className="composer-controls"><span className="model"><Icon name="layers"/>固定响应模型</span><span className="preview-notice">流程演练</span><button className="send" type="submit" aria-label="发送消息"><Icon name="send"/></button></div></form><p className="composer-disclaimer">开发验收环境 · 不执行真实业务操作</p></div>
       </section></div>
     </main>
-    <aside className="plan-panel"><Panel {...props}/></aside><footer className="statusbar"><span className="saved">持久状态已连接</span><span className="optional">固定响应模型 · 真实 DSH AgentLoop</span><span className="right">dsh-taskflow · 0.1.0-alpha.1</span></footer>
+    <aside className="plan-panel"><Panel {...props}/></aside><footer className="statusbar"><span className="saved">持久状态已连接</span><span className="optional">固定响应模型 · 真实 DSH AgentLoop</span><span className="right">dsh-taskflow · {packageInfo.version}</span></footer>
     {dialog && <TaskDialog title={dialog === 'activity' ? '任务动态' : dialog === 'artifacts' ? '交付结果' : '开发验收环境'} subtitle="dsh-taskflow" onClose={() => setDialog(null)}>{dialog === 'activity' ? [...(data.plan?.events ?? [])].reverse().map(e => <article className="history" key={e.id}><time>{e.at.replace('T', ' ').slice(0, 19)} · {e.taskId}</time>{e.detail}</article>) : dialog === 'artifacts' ? tasks.filter(t => t.report).length ? tasks.filter(t => t.report).map(t => <div className="notice" key={t.id}><strong>{t.id} · {t.title}</strong><p>{t.report.summary}</p></div>) : <p className="notice">尚无执行结果。</p> : <div className="notice">当前为隔离的本地验收环境，使用真实 DSH AgentLoop 和固定响应模型。任务状态保存在 .local/dev；页面样式直接复用仓库保存的 PRD。浏览器为实际 iframe 预览，终端仅展示输出。</div>}</TaskDialog>}
   </div>;
 }
