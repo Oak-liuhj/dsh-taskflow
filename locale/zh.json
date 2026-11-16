@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "dsh-taskflow",
-    "description": "DeepSeek Harness 智能任务编排插件：模型按任务复杂度生成持久层级清单，按需创建子会话，完成后自动勾选并通知直接父会话。",
-    "detail": "docs/DETAIL.zh-CN.md"
+    "title": "任务编排 (dsh-taskflow)",
+    "description": "智能任务编排插件：根据任务复杂度规划持久清单，按需委派多层子会话，完成后自动勾选并通知父任务。",
+    "detail": "README.md"
   }
 }
