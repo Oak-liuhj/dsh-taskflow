@@ -1,6 +1,6 @@
 {
   "name": "dsh-taskflow",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0",
   "description": "智能任务编排：持久层级计划、按需递归子会话与完成通知",
   "type": "module",
   "main": "index.js",
@@ -39,11 +39,12 @@
     "check:release": "node scripts/check-release.mjs",
     "check:package": "node scripts/check-package.mjs",
     "prepack": "npm run build && npm test && npm run check:release",
-    "dev": "node scripts/dev.mjs"
+    "dev": "node scripts/dev.mjs",
+    "check:hosts": "node scripts/check-hosts.mjs"
   },
   "engines": {
     "node": ">=24.9.0",
-    "dsh": "0.2.2-rc.2"
+    "dsh": ">=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0"
   },
   "dsh": {
     "bundle": {
@@ -61,10 +62,10 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "~4.1.0",
-    "@deepseek-ai/dsh-llm": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.2-rc.2",
-    "@deepseek-ai/schemastery": "~3.19.0",
+    "@deepseek-ai/cordis": "~4.0.5 || ~4.1.0",
+    "@deepseek-ai/dsh-llm": ">=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0",
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0",
+    "@deepseek-ai/schemastery": "~3.18.5 || ~3.19.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -89,7 +90,8 @@
     "jsdom": "26.1.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "yaml": "2.8.1"
+    "yaml": "2.8.1",
+    "semver": "7.7.3"
   },
   "license": "(Apache-2.0 AND MIT)",
   "author": "Oak-liuhj",
@@ -115,7 +117,7 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/",
-    "tag": "alpha"
+    "tag": "latest"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {

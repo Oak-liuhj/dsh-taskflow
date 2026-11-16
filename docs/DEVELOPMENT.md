@@ -43,6 +43,7 @@ npm test               # 领域、调度、客户端和真实 AgentLoop 固定�
 npm run check:release  # 元数据、入口、依赖、许可和投稿格式
 npm run check          # 上述一致性检查 + 测试 + 发布检查
 npm run check:package  # 打包并真实安装 tgz，检查生产入口和客户端
+npm run check:hosts    # 在隔离目录安装最终包和各精确宿主版本，运行固定模型集成
 npm run dev            # http://127.0.0.1:4173
 ```
 
@@ -58,8 +59,14 @@ npm run dev            # http://127.0.0.1:4173
 
 服务端直接导入的 `@deepseek-ai/dsh-tools`、`dsh-llm`、`schemastery` 声明为必需 peer，以保证安装器能够解析实际导入。Cordis 上下文由宿主注入；React / ReactDOM 由浏览器 ModuleLoader 提供，作为 optional peer 声明，开发时仍精确安装。没有引入生产运行时的 esbuild、测试夹具或完整 DSH 可执行程序。
 
-`engines.dsh` 锁定实际测试的 rc.2。registry 的 `latest` 或 `next` 标签变化不会自动扩大兼容声明。Node CI 使用 24.22.1，与本地验证版本一致；最低版本声明为 24.9.0。
+`engines.dsh` 与服务端 DSH peer 使用同一范围，从 0.2.1-rc.3 起、排除 1.0.0 及其预发行；开发依赖固定在 rc.2，作为可复现测试基线。发布校验检查版本边界、README 和 peer 一致性；真实宿主测试的结果单独记录，不能由范围校验推断。registry 的 `latest` 或 `next` 标签变化不会自动扩大兼容声明。Node CI 使用 24.22.1，与本地验证版本一致；最低版本声明为 24.9.0。
 
 ## 提交与 CI
 
 CI 在 Linux 与 Windows 上运行构建一致性、测试、发布格式及实际包安装检查；只上传候选 tgz 和校验和，不发布 npm 或创建市场 PR。提交时包括新源码、生成物、锁文件及文档；不要只提交文件移动的一半，也不要提交 `.local`、凭据、账本和 dist。
+
+## 受限工作区构建
+
+默认从当前项目构建。若工作副本所在目录的祖先无法被原生 esbuild 读取，可设置 `TASKFLOW_BUILD_SOURCE` 指向经过逐文件比对、内容相同的客户端源码目录；只影响构建与客户端测试的源码读取位置，产物仍写入当前项目。此选项用于隔离验证，不进入运行包，也不改变默认构建行为。
+
+`check:hosts` 默认测试 0.2.1-rc.3、0.2.2-rc.2、0.2.2-rc.3；可通过逗号分隔的 `TASKFLOW_HOST_VERSIONS` 指定版本。先执行 `check:package`，再执行宿主矩阵，结果记录在 `dist/host-report.json`，绑定实际 tgz 的 SHA-256。报告仅证明服务端固定模型流程，不证明完整原生界面和生产模型已验收。测试会安装注册表上的真实宿主依赖，需要网络或对应缓存。

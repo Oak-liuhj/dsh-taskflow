@@ -22,7 +22,9 @@ export async function apply(ctx, config = {}) {
   const log = error => ctx.logger?.warn?.(`taskflow: ${error.message ?? error}`);
   runtime = new TaskRuntime(service, {
     agent: sid => ctx.agents.get(sid), log,
-    start: request => ctx.subagents.startActivation({ provider: config.provider || 'spawn', ...request, delivery: 'caller' }),
+    // DSH 0.2.1-rc.3 accepts a nested request; 0.2.2-rc.2+ uses top-level fields.
+    // Supply both shapes in one call so neither host needs a retry or a second activation.
+    start: request => ctx.subagents.startActivation({ provider: config.provider || 'spawn', ...request, request, delivery: 'caller' }),
     notify: createNoticeSender(ctx),
   });
   ctx.provide('taskflow', { service, runtime });

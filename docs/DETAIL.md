@@ -1,14 +1,15 @@
 # Taskflow
 
-An alpha DeepSeek Harness plugin for persistent task trees, selective nested
+A DeepSeek Harness plugin (0.1.0) for persistent task trees, selective nested
 sessions and direct-parent completion notifications.
 
 ## Requirements
 
-DSH **0.2.2-rc.2**, Node.js **>=24.9.0**, and enabled host services for tools,
+DSH **>=0.2.1-rc.3 <1.0.0-0**, Node.js **>=24.9.0**, and enabled host services for tools,
 agents, sessions, systemPrompt and subagents, with a `spawn` provider.
 The client requires the conversation, workspace and right-sidebar services.
-Other host versions are not declared compatible.
+Full `engines.dsh` declaration: `>=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0`.
+The declared range is separate from the versions exercised in the acceptance record.
 
 ## Workflow
 

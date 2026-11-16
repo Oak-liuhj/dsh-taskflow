@@ -59,7 +59,7 @@ test('真实 DSH rc.2 AgentLoop：模型规划、行内执行、spawn 子会话�
     const agent = await harness.create('taskflow-main', { provider: 'fixture', model: 'scripted', maxTokens: 2000 }, { cwd: process.cwd() });
     ctx.on('tools/result', (_exec, result) => { if (result.isError) errors.push(result); }, { global: true });
     agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '完成持久任务编排集成验证，分别验证行内事项和独立子会话。' }] }));
-    await until(() => ctx.taskflow.service.view('taskflow-main').plan?.tasks['T-002'].status === 'completed');
+    await until(() => ctx.taskflow.service.view('taskflow-main').plan?.tasks['T-002'].status === 'completed').catch(error => { throw new Error(`${error.message}: ${JSON.stringify({ errors, view: ctx.taskflow.service.view('taskflow-main'), requests: requests.length })}`, { cause: error }); });
     await until(() => ctx.taskflow.service.store.read().outbox.every(n => n.delivered));
     await agent.whenIdle();
     assert.deepEqual(errors, []);

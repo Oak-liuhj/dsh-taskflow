@@ -5,6 +5,10 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { Script, createContext } from 'node:vm';
 import { parse } from 'yaml';
+import semver from 'semver';
+
+export const SUPPORTED_DSH_RANGE = '>=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0';
+export const HOST_BOUNDARIES = [['0.2.1-rc.2',false],['0.2.1-rc.3',true],['0.2.1',true],['0.2.2-0',true],['0.2.2-rc.2',true],['0.2.3-0',true],['0.3.0-0',true],['0.9.9',true],['1.0.0-0',false],['1.0.0-alpha.1',false],['1.0.0',false],['2.0.0',false]];
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const json = async path => JSON.parse(await readFile(path, 'utf8'));
@@ -18,7 +22,12 @@ export async function checkRuntime(root) {
   assert.equal(pkg.name, 'dsh-taskflow'); assert.equal(pkg.type, 'module');
   assert.equal(pkg.main, 'index.js'); assert.equal(pkg.exports['.'], './index.js');
   assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml');
-  assert.equal(pkg.engines.dsh, '0.2.2-rc.2', 'Widen host compatibility only after an explicit acceptance run');
+  assert.equal(pkg.engines.dsh, SUPPORTED_DSH_RANGE, 'Host declaration must match the release compatibility policy');
+  assert.ok(semver.validRange(pkg.engines.dsh));
+  for (const [version, expected] of HOST_BOUNDARIES) assert.equal(semver.satisfies(version, pkg.engines.dsh, { includePrerelease: true }), expected, `Host boundary: ${version}`);
+  for (const name of ['@deepseek-ai/dsh-llm','@deepseek-ai/dsh-tools']) assert.equal(pkg.peerDependencies[name], SUPPORTED_DSH_RANGE, `Host peer must not remain pinned: ${name}`);
+  assert.equal(pkg.peerDependencies['@deepseek-ai/cordis'], '~4.0.5 || ~4.1.0');
+  assert.equal(pkg.peerDependencies['@deepseek-ai/schemastery'], '~3.18.5 || ~3.19.0');
   assert.equal(pkg.publishConfig.registry, 'https://registry.npmjs.org/');
   assert.equal(pkg.publishConfig.access, 'public');
   assert.equal(pkg.publishConfig.tag, pkg.version.includes('-') ? pkg.version.split('-')[1].split('.')[0] : 'latest');
@@ -50,7 +59,7 @@ export async function checkRuntime(root) {
   for (const id of requested) assert.ok(pkg.peerDependencies[id], `Undeclared client peer: ${id}`);
   const entry = await import(pathToFileURL(join(root,pkg.main)).href);
   assert.equal(entry.name,'taskflow'); assert.equal(typeof entry.apply,'function'); assert.ok(entry.Config); assert.ok(entry.inject.includes('subagents'));
-  return { name:pkg.name,version:pkg.version,host:pkg.engines.dsh,clientDependencies:[...requested] };
+  return { name:pkg.name,version:pkg.version,host:pkg.engines.dsh,hostBoundaryChecks:HOST_BOUNDARIES.length,clientDependencies:[...requested] };
 }
 
 export async function checkRelease(root = project) {
@@ -79,7 +88,7 @@ export async function checkRelease(root = project) {
   const screenshots = await json(join(root,'screenshots.json'));
   assert.ok(screenshots.length >= 1 && screenshots.length <= 8);
   for (const path of screenshots) { assert.match(path,/^docs\/screenshots\/[\w-]+\.png$/); await readFile(join(root,path)); }
-  const readme = await readFile(join(root,'README.md'),'utf8'); assert.ok(readme.includes(pkg.version)); assert.doesNotMatch(readme,/file:\/\/\/|[A-Z]:\\|Users\/Administrator/);
+  const readme = await readFile(join(root,'README.md'),'utf8'); assert.ok(readme.includes(pkg.version)); assert.ok(readme.includes(pkg.engines.dsh), 'README must include the declared host range'); assert.doesNotMatch(readme,/file:\/\/\/|[A-Z]:\\|Users\/Administrator/);
   assert.ok(!pkg.files.some(p=>['src','docs','scripts','test','.local','docs/screenshots','docs/prototype'].includes(p.replace(/\/$/,''))), 'Runtime package must use an explicit allowlist');
   return { ...result, runtimeImports:[...runtimeImports],screenshots:screenshots.length };
 }

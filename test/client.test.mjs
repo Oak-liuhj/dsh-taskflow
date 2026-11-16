@@ -8,7 +8,7 @@ import { TaskService } from '../src/domain/task-service.mjs';
 import { MemoryStore } from '../src/storage/task-store.mjs';
 
 test('编译后客户端：槽位注册、父任务预填、会话导航和工具 portal 清理', async () => {
-  const compiled = await build({ entryPoints: ['src/client/index.jsx'], bundle: true, write: false, format: 'esm', platform: 'node', packages: 'external', loader: { '.css': 'text' } });
+  const compiled = await build({ absWorkingDir: process.env.TASKFLOW_BUILD_SOURCE || process.cwd(), entryPoints: ['src/client/index.jsx'], bundle: true, write: false, format: 'esm', platform: 'node', packages: 'external', loader: { '.css': 'text' } });
   // Node data URL cannot resolve package imports; install the test artifact next to node_modules.
   const { mkdir, writeFile } = await import('node:fs/promises'); await mkdir('.local/tests', { recursive: true });
   await writeFile('.local/tests/client.mjs', compiled.outputFiles[0].text);

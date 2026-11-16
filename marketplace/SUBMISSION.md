@@ -7,7 +7,8 @@ PR 标题：`Add Oak-liuhj/dsh-taskflow`
 
 PR 正文草稿：
 
-Adds an alpha DSH workflow plugin targeting 0.2.2-rc.2. It keeps a persistent
+Adds dsh-taskflow 0.1.0, a DSH workflow plugin declaring support from
+0.2.1-rc.3 up to (excluding) 1.0.0 prereleases and releases. It keeps a persistent
 hierarchical task ledger, delegates independent work to nested sessions when
 needed, and notifies the direct parent on completion without a review gate.
 
