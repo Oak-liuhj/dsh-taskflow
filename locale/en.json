@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "dsh-taskflow",
+    "description": "DeepSeek Harness Smart Task Orchestration Plugin: The model generates a persistent hierarchical list based on task complexity, creates sub-sessions as needed, and automatically checks off tasks and notifies the direct parent session when done.",
+    "detail": "docs/DETAIL.md"
+  }
+}

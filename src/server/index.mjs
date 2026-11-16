@@ -1,0 +1,36 @@
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { FileStore } from '../storage/task-store.mjs';
+import { TaskService } from '../domain/task-service.mjs';
+import { TaskRuntime } from '../application/task-runtime.mjs';
+import { createNoticeSender } from './notifications.mjs';
+import { registerTools } from './tools.mjs';
+import { registerSessionContext } from './session-context.mjs';
+import { registerToolViews } from './tool-views.mjs';
+import { registerRpc } from './rpc.mjs';
+export { Config } from './config.mjs';
+export const name = 'taskflow';
+export const inject = ['tools', 'agents', 'sessions', 'systemPrompt', 'subagents'];
+
+// 生命周期装配入口；状态、调度与宿主 API 适配各自独立。
+export async function apply(ctx, config = {}) {
+  const dataDir = config.dataDir || join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'taskflow');
+  const store = await new FileStore(dataDir).init();
+  let runtime, timer;
+  ctx.effect(() => async () => { clearInterval(timer); await runtime?.dispose(); await store.close(); });
+  const service = new TaskService(store, config); await service.recover();
+  const log = error => ctx.logger?.warn?.(`taskflow: ${error.message ?? error}`);
+  runtime = new TaskRuntime(service, {
+    agent: sid => ctx.agents.get(sid), log,
+    start: request => ctx.subagents.startActivation({ provider: config.provider || 'spawn', ...request, delivery: 'caller' }),
+    notify: createNoticeSender(ctx),
+  });
+  ctx.provide('taskflow', { service, runtime });
+  registerTools(ctx, service, runtime);
+  registerSessionContext(ctx, service, config);
+  registerToolViews(ctx, service, log);
+  registerRpc(ctx, service);
+  ctx.on('agent/created', () => { runtime.kick(); return undefined; }, { global: true });
+  timer = setInterval(() => runtime.kick(), 3000); timer.unref?.();
+  runtime.kick();
+}
