@@ -20,8 +20,8 @@ export function TaskPanel({ view, sessionId, action, navigate, augment, onError 
     {!collapsed.has(t.id) && t.children.length > 0 && <div className="child-tasks">{t.children.map(row)}</div>}
   </div>;
   const selected = p?.tasks[detail];
-  return <section className="tf-panel" aria-label="任务导航">
-    <header className="plan-tabs"><span className="tab"><Icon name="check"/>任务导航</span><span className="pill" style={{ fontSize: 10 }}>持久计划</span><button className="iconbtn" aria-label="查看任务动态" onClick={() => setDetail('activity')}><Icon name="dots"/></button></header>
+  return <section className="tf-panel" aria-label="待办任务清单">
+    <header className="plan-tabs"><span className="tab"><Icon name="check"/>待办任务清单</span><span className="pill" style={{ fontSize: 10 }}>持久计划</span><button className="iconbtn" aria-label="查看任务动态" onClick={() => setDetail('activity')}><Icon name="dots"/></button></header>
     {view.loading ? <p className="empty">正在加载任务…</p> : !p ? <div className="empty"><Icon name="check"/><p>暂无任务计划</p><p>在会话中描述目标，模型将根据任务复杂度规划待办。</p></div> : <>
       <div className="plan-heading"><h2>{p.title}</h2><div className="progress-label"><strong>{pr.done} / {pr.total} 项已完成</strong><span>v{p.version} · {pr.percent}%</span></div><div className="progress-track" role="progressbar" aria-label="根任务完成进度" aria-valuenow={pr.percent} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${pr.percent}%` }}/></div></div>
       <div className="plan-controls"><div className="segments">{[['global', '全局计划'], ['local', '当前会话']].map(([id, title]) => <button key={id} className={scope === id ? 'selected' : ''} aria-pressed={scope === id} onClick={() => setScope(id)}>{title}</button>)}</div><select aria-label="任务筛选" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">全部事项</option><option value="active">未完成</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select></div>

@@ -15,7 +15,7 @@ const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 const archive = resolve('dist', `${pkg.name}-${pkg.version}.tgz`);
 const archiveSha256 = createHash('sha256').update(await readFile(archive)).digest('hex');
 const versions = process.env.TASKFLOW_HOST_VERSIONS?.split(',').map(v => v.trim()).filter(Boolean) ?? ['0.2.1-rc.3', '0.2.2-rc.2', '0.2.2-rc.3'];
-const hostNames = Object.keys(pkg.devDependencies).filter(name => name.startsWith('@deepseek-ai/dsh-') && !name.startsWith('@deepseek-ai/dsh-client-'));
+const hostNames = Object.keys(pkg.devDependencies).filter(name => name.startsWith('@deepseek-ai/dsh-') && (!name.startsWith('@deepseek-ai/dsh-client-') || name === '@deepseek-ai/dsh-client-connection'));
 const cache = resolve('.local/npm-cache'), results = [];
 for (const version of versions) {
   assert.ok(semver.valid(version) && semver.satisfies(version, pkg.engines.dsh, { includePrerelease: true }), `Unsupported fixture: ${version}`);
@@ -42,8 +42,12 @@ for (const version of versions) {
     const test = (await readFile('test/host.test.mjs', 'utf8')).replace('真实 DSH rc.2 AgentLoop', `真实 DSH ${version} AgentLoop`);
     await writeFile(join(fixture, 'test/host.test.mjs'), test);
     await copyFile('src/server/notifications.mjs', join(fixture, 'src/server/notifications.mjs'));
+    await copyFile('test/rpc-http.test.mjs', join(fixture, 'test/rpc-http.test.mjs'));
+    let rpcTest = await readFile(join(fixture, 'test/rpc-http.test.mjs'), 'utf8');
+    rpcTest = rpcTest.replace("'../src/domain/task-service.mjs'", "'../node_modules/dsh-taskflow/src/domain/task-service.mjs'").replace("'../src/storage/task-store.mjs'", "'../node_modules/dsh-taskflow/src/storage/task-store.mjs'");
+    await writeFile(join(fixture, 'test/rpc-http.test.mjs'), rpcTest);
     const plugin = join(fixture, 'node_modules', pkg.name, 'index.js');
-    const { stdout } = await run(process.execPath, ['--test', 'test/host.test.mjs'], { cwd: fixture, env: { ...process.env, TASKFLOW_TEST_PLUGIN: plugin }, maxBuffer: 8 * 1024 * 1024, timeout: 60000 });
+    const { stdout } = await run(process.execPath, ['--test', 'test/host.test.mjs', 'test/rpc-http.test.mjs'], { cwd: fixture, env: { ...process.env, TASKFLOW_TEST_PLUGIN: plugin, TASKFLOW_TEST_RPC: join(fixture, 'node_modules', pkg.name, 'src/server/rpc.mjs') }, maxBuffer: 8 * 1024 * 1024, timeout: 60000 });
     results.push({ version, passed: true, dependencies, output: stdout });
     console.log(`Host ${version}: passed`);
   } catch (error) {
@@ -56,5 +60,5 @@ for (const version of versions) {
   }
 }
 await mkdir(join(root, 'dist'), { recursive: true });
-await writeFile('dist/host-report.json', JSON.stringify({ pluginVersion: pkg.version, declaredRange: pkg.engines.dsh, archiveSha256, scope: 'Packed server plugin with exact host dependencies and deterministic AgentLoop model; excludes full UI and production providers', results }, null, 2) + '\n');
+await writeFile('dist/host-report.json', JSON.stringify({ pluginVersion: pkg.version, declaredRange: pkg.engines.dsh, archiveSha256, scope: 'Packed server plugin with exact host dependencies and deterministic AgentLoop model, plus real authenticated Connection HTTP RPC; excludes full UI and production providers', results }, null, 2) + '\n');
 if (results.some(result => !result.passed)) process.exitCode = 1;

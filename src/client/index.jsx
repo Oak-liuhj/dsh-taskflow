@@ -9,15 +9,15 @@ import { Icon } from './generated/icons.jsx';
 
 export const inject = ['slots', 'sessions', 'connection'];
 export function createApi(connection) {
-  const call = async (method, data) => { const result = await connection.rpc.call('/api', method, data); if (!result.ok) throw new Error(result.error.message); return result.value; };
-  return { view: sessionId => call('taskflow/view', { sessionId }), action: (sessionId, action, data) => call('taskflow/action', { sessionId, action, ...data }) };
+  const call = async (method, data) => { const result = await connection.rpc.call('/taskflow', method, data); if (!result.ok) throw new Error(result.error.message); return result.value; };
+  return { view: sessionId => call('view', { sessionId }), action: (sessionId, action, data) => call('action', { sessionId, action, ...data }) };
 }
 export function apply(ctx) {
   const api = createApi(ctx.connection), renderers = new Map();
   ctx.provide('taskflowViews', { register(kind, component) { renderers.set(kind, component); return () => { if (renderers.get(kind) === component) renderers.delete(kind); }; } });
   ctx.effect(() => { const style = document.createElement('style'); style.dataset.dshTaskflow = ''; style.textContent = css + '\n' + prototypeCss; document.head.append(style); return () => style.remove(); });
   ctx.inject(['sidebarRightTabs', 'sidebarRight', 'uiWorkspace'], scope => {
-    scope.effect(() => scope.sidebarRightTabs.register({ id: 'dsh-taskflow', kind: 'taskflow', priority: 'extension', keepMounted: true, title: () => '任务导航', guide: [{ id: 'taskflow', order: 0, title: () => '任务导航', description: () => '持久层级待办' }] }));
+    scope.effect(() => scope.sidebarRightTabs.register({ id: 'dsh-taskflow', kind: 'taskflow', priority: 'extension', keepMounted: true, title: () => '待办任务清单', guide: [{ id: 'taskflow', order: 0, title: () => '待办任务清单', description: () => '持久层级待办' }] }));
     const register = (slot, options, Component) => scope.effect(() => scope.slots.inject(slot, () => scope.slots.register({ name: slot, ...options }, Component)));
     const augment = (props, value) => { const binding = ctx.sessions.binding(props.sessionId); const input = binding && ctx.conversation?.input?.for(binding.ctx); if (input) { input.setDraft(value); input.focus(); } else props.inputActions?.setDraft(value); };
     function Panel(props) { const view = useTaskflow(api, props.sessionId); return <TaskPanel view={view} sessionId={props.sessionId} action={(type, data) => api.action(props.sessionId, type, data)} navigate={id => scope.uiWorkspace.openSession(id)} augment={value => augment(props, value)}/>; }
@@ -41,7 +41,7 @@ export function apply(ctx) {
         return () => { observer?.disconnect(); cleanup(); setMount(null); };
       }, [view.tool?.open, props.sessionId]);
       const Renderer = renderers.get(view.tool?.kind);
-      return <><button className="tf-entry" onClick={() => scope.sidebarRight.openTab('taskflow')}><Icon name="check"/>任务导航</button>{view.tool?.open && <span className="tf-mobile-view"><button aria-pressed={!showTool} onClick={() => setShowTool(false)}>看对话</button><button aria-pressed={showTool} onClick={() => setShowTool(true)}>看工具</button></span>}{mount && createPortal(<ToolPanel tool={view.tool} onClose={() => void api.action(props.sessionId, 'close-view', {})} renderer={Renderer ? tool => <Renderer tool={tool} sessionId={props.sessionId}/> : null}/>, mount)}</>;
+      return <><button className="tf-entry" onClick={() => scope.sidebarRight.openTab('taskflow')}><Icon name="check"/>任务</button>{view.tool?.open && <span className="tf-mobile-view"><button aria-pressed={!showTool} onClick={() => setShowTool(false)}>看对话</button><button aria-pressed={showTool} onClick={() => setShowTool(true)}>看工具</button></span>}{mount && createPortal(<ToolPanel tool={view.tool} onClose={() => void api.action(props.sessionId, 'close-view', {})} renderer={Renderer ? tool => <Renderer tool={tool} sessionId={props.sessionId}/> : null}/>, mount)}</>;
     }
     register('conversation.session.header.utilities', { id: 'taskflow', order: -5 }, SessionEntry);
   });

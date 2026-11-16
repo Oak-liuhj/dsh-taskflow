@@ -5,9 +5,9 @@ import { registerRpc } from '../src/server/rpc.mjs';
 function endpoint(browserPeer) {
   let handler, reads = 0;
   const service = { view: sid => { reads++; return { sessionId:sid }; } };
-  const scope = { connection:{ browserPeer, rpc:{intercept(channel, matches, fn) { assert.equal(channel,'/api'); assert.equal(matches('taskflow/view'),true); assert.equal(matches('other'),false); handler=fn; return () => {}; }}}, effect:fn=>fn() };
+  const scope = { connection:{ browserPeer, rpc:{handle(channel, fn) { assert.equal(channel,'/taskflow'); handler=fn; return () => {}; }}}, effect:fn=>fn() };
   registerRpc({inject:(_names, fn)=>fn(scope)},service);
-  return {call:(peer,payload={sessionId:'main'},method='taskflow/view')=>handler(method,payload,undefined,peer),reads:()=>reads};
+  return {call:(peer,payload={sessionId:'main'},method='view')=>handler(method,payload,undefined,peer),reads:()=>reads};
 }
 
 test('发布前 RPC 边界：匿名/缺少 browserPeer 不放行，外部访客拒绝，所有者和绑定浏览器可读', async () => {
@@ -18,6 +18,7 @@ test('发布前 RPC 边界：匿名/缺少 browserPeer 不放行，外部访客�
   assert.deepEqual(await api.call(browser),{ok:true,value:{sessionId:'main'}});
   assert.equal((await api.call({principal:{kind:'owner'}})).ok,true);
   assert.equal((await api.call(browser,null)).error.code,'invalid');
-  assert.equal((await api.call(browser,{sessionId:'main',action:'unsupported'},'taskflow/action')).error.code,'invalid');
+  assert.equal((await api.call(browser,{sessionId:'main',action:'unsupported'},'action')).error.code,'invalid');
+  assert.equal((await api.call(browser,{sessionId:'main',action:'focus'},'unknown')).error.code,'invalid');
   assert.equal(api.reads(),2);
 });

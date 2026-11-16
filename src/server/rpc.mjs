@@ -1,12 +1,14 @@
-// 所有者专用界面 RPC，与模型会话内的权限校验分开。
+// 独立 RPC 通道，避免抢占宿主 Gateway 的 /api interceptor。
+// 传输沿用宿主认证；界面仍仅允许所有者访问。
 export function registerRpc(ctx, service) {
-  ctx.inject(['connection'], scope => {
-    scope.effect(() => scope.connection.rpc.intercept('/api', method => method === 'taskflow/view' || method === 'taskflow/action', async (method, payload, signal, peer) => {
+  ctx.inject(['connection', 'webServer'], scope => {
+    scope.effect(() => scope.connection.rpc.handle('/taskflow', async (method, payload, signal, peer) => {
       if (!peer || (peer !== scope.connection.browserPeer && peer.principal?.kind !== 'owner')) return { ok: false, error: { code: 'forbidden', message: '仅宿主所有者可访问任务计划', details: {} } };
       try {
         if (!payload || typeof payload.sessionId !== 'string' || payload.sessionId.length > 200) throw new Error('缺少有效会话 ID');
         const sid = payload.sessionId;
-        if (method === 'taskflow/view') return { ok: true, value: service.view(sid) };
+        if (method === 'view') return { ok: true, value: service.view(sid) };
+        if (method !== 'action') throw new Error('不支持的方法');
         let value;
         if (payload.action === 'close-view') value = await service.closeView(sid);
         else if (payload.action === 'focus') value = await service.focus(sid, payload.taskId);

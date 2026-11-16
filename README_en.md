@@ -37,7 +37,7 @@ dsh plugin --profile web add dsh-taskflow@latest
 To pin the current version:
 
 ```sh
-dsh plugin --profile web add dsh-taskflow@0.1.1
+dsh plugin --profile web add dsh-taskflow@0.1.2
 ```
 
 Replace `web` with your profile name. For an npm-based installation, you can also recheck versions in the plugin details, choose a compatible update and follow the host's reload or restart instructions.
@@ -56,7 +56,7 @@ Describe your goal in the main conversation. The model plans requests that need 
 
 ## ✅ Task navigation — one checklist across turns
 
-Click **任务导航 / Task navigation** in the session header, or select its right-sidebar entry. Tasks appear directly in their parent-child hierarchy, without extra planning or review categories.
+Click **✓ 任务 (Tasks)** in the session header to open the **待办任务清单 (To-do checklist)** panel on the right. Tasks appear directly in their parent-child hierarchy, without extra planning or review categories.
 
 | Item | What it tells you |
 | --- | --- |
@@ -122,7 +122,7 @@ Adjust the plugin configuration in the profile you use. Defaults are in [cordis.
 
 ## Notes
 
-- **Compatibility** — Current version **0.1.1**, Node.js **≥24.9.0**. The declared DSH range is `>=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0`. Enable `tools`, `agents`, `sessions`, `systemPrompt`, `subagents` and the corresponding client services.
+- **Compatibility** — Current version **0.1.2**, Node.js **≥24.9.0**. The declared DSH range is `>=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0`. Enable `tools`, `agents`, `sessions`, `systemPrompt`, `subagents` and the corresponding client services.
 - **Planning and execution** — Automatic planning is model-guided. Task decomposition and tool choices depend on the host model. The ledger is independent of `todo_write`; later messages update the same plan incrementally.
 - **Data and recovery** — Use one active writer per `dataDir`. Back up the whole directory while the host is stopped, together with native DSH sessions for a complete migration. Interrupted tasks recover as paused and can be resumed in their owner conversation. Uninstalling the plugin preserves the ledger.
 - **Validation** — 30 automated tests, 12 version boundaries and deterministic-model integrations with exact hosts `0.2.1-rc.3`, `0.2.2-rc.2` and `0.2.2-rc.3` have passed. Full native profiles, production models and third-party tools still need acceptance; see the [acceptance record](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/docs/acceptance.md).

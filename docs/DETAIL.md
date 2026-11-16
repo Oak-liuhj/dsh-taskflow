@@ -1,6 +1,6 @@
 # Taskflow
 
-A DeepSeek Harness plugin (0.1.1) for persistent task trees, selective nested
+A DeepSeek Harness plugin (0.1.2) for persistent task trees, selective nested
 sessions and direct-parent completion notifications.
 
 ## Requirements

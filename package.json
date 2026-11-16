@@ -1,6 +1,6 @@
 {
   "name": "dsh-taskflow",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "智能任务编排：持久层级计划、按需递归子会话与完成通知",
   "type": "module",
   "main": "index.js",
