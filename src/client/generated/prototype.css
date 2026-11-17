@@ -15,10 +15,19 @@
 :where(.tf-panel,.tf-tool,.tf-dialog) .pill{display:inline-flex;align-items:center;gap:5px;background:var(--hover);color:var(--secondary);font-size:11px;line-height:18px;padding:2px 7px;border-radius:6px;white-space:nowrap}
 :where(.tf-panel,.tf-tool,.tf-dialog) .pill.blue{color:var(--blue);background:var(--dsw-specific-bubble)}
 :where(.tf-panel,.tf-tool,.tf-dialog) .pill.success{color:var(--dsw-alias-state-success-primary,#168349);background:var(--dsw-static-green-500-a08)}
-:where(.tf-panel,.tf-tool,.tf-dialog) .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);display:inline-block;flex-shrink:0}
-:where(.tf-panel,.tf-tool,.tf-dialog) .dot.running{background:var(--blue)}
-:where(.tf-panel,.tf-tool,.tf-dialog) .dot.completed{background:var(--dsw-static-green-500)}
-:where(.tf-panel,.tf-tool,.tf-dialog) .dot.awaiting_children{background:var(--dsw-static-amber-500)}
+:where(.tf-panel,.tf-tool,.tf-dialog,.tf-session-tree,.tf-session-root) .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);display:inline-block;flex-shrink:0}
+:where(.tf-panel,.tf-tool,.tf-dialog,.tf-session-tree,.tf-session-root) .dot.running{background:var(--blue)}
+:where(.tf-panel,.tf-tool,.tf-dialog,.tf-session-tree,.tf-session-root) .dot.completed{background:var(--dsw-static-green-500)}
+:where(.tf-panel,.tf-tool,.tf-dialog,.tf-session-tree,.tf-session-root) .dot.awaiting_children{background:var(--dsw-static-amber-500)}
+:is(.tf-session-root,.tf-session-tree .session-row){display:flex;align-items:center;width:calc(100% - 6px);height:36px;border-radius:12px;text-align:left;margin:3px;gap:6px;padding:0 9px;font-size:13px;min-width:0}
+:is(.tf-session-root,.tf-session-tree .session-row).selected{background:var(--hover)}
+:is(.tf-session-root,.tf-session-tree .session-row) svg{width:16px;height:16px;color:var(--muted)}
+:is(.tf-session-root,.tf-session-tree .session-row) span.title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.tf-session-tree .session-children{padding-left:14px;position:relative;margin-left:8px}
+.tf-session-tree .session-children:before{content:"";position:absolute;left:6px;top:3px;bottom:3px;width:1px;background:var(--line)}
+:is(.tf-session-root,.tf-session-tree .session-row) .dot{width:5px;height:5px}
+.tf-quick-replies{display:flex;align-items:center;gap:7px;flex-wrap:wrap;max-width:780px;margin:0 auto 11px}
+.tf-quick-replies button{font-size:11px;color:var(--secondary);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
 .tf-tool{display:flex;flex-direction:column;flex:0 0 48%;max-width:650px;min-width:300px;min-height:0;border-right:1px solid var(--dsw-alias-border-l3);background:var(--surface);order:-1}
 :where(.tf-panel,.tf-tool,.tf-dialog) .tool-header{height:38px;flex-shrink:0;display:flex;align-items:center;gap:7px;padding:0 10px;font-size:12px;border-bottom:1px solid var(--line)}
 :where(.tf-panel,.tf-tool,.tf-dialog) .tool-header svg{width:15px;height:15px}
@@ -116,8 +125,11 @@ body[data-ds-dark-theme] :where(.tf-panel,.tf-tool,.tf-dialog) .notice.warn{back
 @media(max-width:1080px){:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading{padding:15px}
 :where(.tf-panel,.tf-tool,.tf-dialog) .plan-controls{padding:0 12px 12px}
 }
-@media(max-width:790px){.tf-tool{min-width:0;max-width:none;flex:1}
+@media(max-width:790px){.tf-quick-replies{gap:5px}
+.tf-quick-replies button{font-size:10px;padding:4px 6px}
+.tf-tool{min-width:0;max-width:none;flex:1}
 :where(.tf-panel,.tf-tool,.tf-dialog) .tool-header .binding{font-size:10px}
+:is(.tf-session-root,.tf-session-tree .session-row){height:40px;font-size:14px}
 :where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading{padding:20px}
 :where(.tf-panel,.tf-tool,.tf-dialog) .plan-controls{padding:0 18px 14px}
 :where(.tf-panel,.tf-tool,.tf-dialog) .task-list{padding:0 16px 16px}

@@ -12,13 +12,16 @@ export async function readPrd() {
 const classes = new Set(('plan-panel plan-tabs tab pill iconbtn btn plan-heading progress-label progress-track plan-controls segments task-list task-node task-row task-line task-box task-copy task-title task-meta task-status child-tasks plan-bottom empty tool-panel tool-header binding tool-context tool-content tool-footer browser-window browser-toolbar address code-window file-tab terminal plugin-card tool-caption dialog-head dialog-body dialog-actions notice field detail-kv history subtle dot saved').split(' '));
 function scopeSelector(selector) {
   const s = selector.trim();
+  if (s.startsWith('.session-row')) return s.replace('.session-row', ':is(.tf-session-root,.tf-session-tree .session-row)');
+  if (s.startsWith('.session-children')) return `.tf-session-tree ${s}`;
+  if (s.startsWith('.suggestions')) return s.replace('.suggestions', '.tf-quick-replies');
   if (s === 'dialog' || s === 'dialog::backdrop') return s.replace('dialog', '.tf-dialog');
   const names = [...s.matchAll(/\.([a-zA-Z][\w-]*)/g)].map(m => m[1]);
   if (!names.length || !classes.has(names[0])) return null;
   if (s.startsWith('body[')) return s.replace(' .', ' :where(.tf-panel,.tf-tool,.tf-dialog) .');
   if (s.startsWith('.plan-panel')) return s.replace('.plan-panel', '.tf-panel');
   if (s.startsWith('.tool-panel')) return s.replace('.tool-panel', '.tf-tool');
-  return `:where(.tf-panel,.tf-tool,.tf-dialog) ${s}`;
+  return `:where(.tf-panel,.tf-tool,.tf-dialog${names[0] === 'dot' ? ',.tf-session-tree,.tf-session-root' : ''}) ${s}`;
 }
 function scopedRules(css) {
   let result = '', position = 0;

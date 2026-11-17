@@ -46,8 +46,16 @@ for (const version of versions) {
     let rpcTest = await readFile(join(fixture, 'test/rpc-http.test.mjs'), 'utf8');
     rpcTest = rpcTest.replace("'../src/domain/task-service.mjs'", "'../node_modules/dsh-taskflow/src/domain/task-service.mjs'").replace("'../src/storage/task-store.mjs'", "'../node_modules/dsh-taskflow/src/storage/task-store.mjs'");
     await writeFile(join(fixture, 'test/rpc-http.test.mjs'), rpcTest);
+    const inlineTest = (await readFile('test/inline-sessions.test.mjs', 'utf8')).replaceAll("'../src/", "'../node_modules/dsh-taskflow/src/");
+    // The browser model is source-only; native persisted Session checks remain
+    // in the packed-host fixture, while model navigation is covered locally.
+    await writeFile(join(fixture, 'test/inline-sessions.test.mjs'), inlineTest);
+    const viewsTest = (await readFile('test/tool-views.test.mjs', 'utf8')).replaceAll("'../src/", "'../node_modules/dsh-taskflow/src/");
+    await writeFile(join(fixture, 'test/tool-views.test.mjs'), viewsTest);
+    const repliesTest = (await readFile('test/quick-replies.test.mjs', 'utf8')).replaceAll("'../src/", "'../node_modules/dsh-taskflow/src/");
+    await writeFile(join(fixture, 'test/quick-replies.test.mjs'), repliesTest);
     const plugin = join(fixture, 'node_modules', pkg.name, 'index.js');
-    const { stdout } = await run(process.execPath, ['--test', 'test/host.test.mjs', 'test/rpc-http.test.mjs'], { cwd: fixture, env: { ...process.env, TASKFLOW_TEST_PLUGIN: plugin, TASKFLOW_TEST_RPC: join(fixture, 'node_modules', pkg.name, 'src/server/rpc.mjs') }, maxBuffer: 8 * 1024 * 1024, timeout: 60000 });
+    const { stdout } = await run(process.execPath, ['--test', 'test/host.test.mjs', 'test/rpc-http.test.mjs', 'test/inline-sessions.test.mjs', 'test/tool-views.test.mjs', 'test/quick-replies.test.mjs'], { cwd: fixture, env: { ...process.env, TASKFLOW_TEST_PLUGIN: plugin, TASKFLOW_TEST_RPC: join(fixture, 'node_modules', pkg.name, 'src/server/rpc.mjs') }, maxBuffer: 8 * 1024 * 1024, timeout: 60000 });
     results.push({ version, passed: true, dependencies, output: stdout });
     console.log(`Host ${version}: passed`);
   } catch (error) {

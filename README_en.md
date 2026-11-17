@@ -16,6 +16,24 @@
 - **Hierarchical task navigation** — Inspect the task tree, progress, status and details in the right sidebar, then jump to the execution session.
 - **On-demand tool views** — Actual host tool calls can show a page or output to the left of the conversation. The tool area starts closed.
 
+Markdown, Excel, Word, PowerPoint and PDF outputs automatically open through the
+host's document preview plugins inside the tool view. Multiple files open without
+a file or viewer selector. Taskflow does not read document content directly; the
+host preview owns file access, rendering and authorization. Enable the host document
+preview plugin to use this feature. Missing plugins offer a retry action. Automatic
+opening is limited to the foreground task session and does not repeat on polling.
+Terminal-generated files without structured output paths require
+`taskflow_open_view` with the actual `filePath` or `files`.
+
+Previews follow tool-panel resizing, floating and scrolling. Closing the tool view
+releases its own previews and preserves documents opened by the user. The header's
+Tasks button toggles the checklist; another active sidebar page switches to Tasks.
+Execution progress and key findings stay in the current task's child session via
+`taskflow_progress`. Inline work writes to its record session; delegated work writes
+to its execution session. Final results are saved before notifying the direct parent.
+
+The tool view keeps a compact header and fills its remaining height with document previews, without visible paths, reopen controls or success notices. Multiple documents scroll vertically; failures retain a retry action. The docked checklist starts at 300px; drag its left edge to resize, and the preference is remembered. Narrow windows temporarily constrain the width. Fullscreen, floating tabs and other plugin pages retain the host layout. Suggested replies show a small spinner and a left-aligned loading label while waiting for the current response or generating suggestions, until ready or failed. Waiting does not start another model call.
+
 ![Task navigation and conversation](https://raw.githubusercontent.com/Oak-liuhj/dsh-taskflow/main/docs/screenshots/desktop.png)
 
 *Screenshots show the development acceptance shell with a deterministic model.*
@@ -37,7 +55,7 @@ dsh plugin --profile web add dsh-taskflow@latest
 To pin the current version:
 
 ```sh
-dsh plugin --profile web add dsh-taskflow@0.1.2
+dsh plugin --profile web add dsh-taskflow@0.1.3
 ```
 
 Replace `web` with your profile name. For an npm-based installation, you can also recheck versions in the plugin details, choose a compatible update and follow the host's reload or restart instructions.
@@ -45,6 +63,8 @@ Replace `web` with your profile name. For an npm-based installation, you can als
 ## Usage
 
 Describe your goal in the main conversation. The model plans requests that need several steps, tool operations or independent execution; short questions do not need a plan.
+
+With automatic planning enabled, the model assesses whether a checklist is needed and saves it before executing work. If an answer or document is returned without a saved plan, the plugin sends at most two reminders. Planning stops after four unsuccessful steps and the panel shows the reason. Missing information can be clarified first; short questions may explicitly skip planning. Existing plans are updated incrementally.
 
 | Entry point | What you can do |
 | --- | --- |
@@ -56,7 +76,7 @@ Describe your goal in the main conversation. The model plans requests that need 
 
 ## ✅ Task navigation — one checklist across turns
 
-Click **✓ 任务 (Tasks)** in the session header to open the **待办任务清单 (To-do checklist)** panel on the right. Tasks appear directly in their parent-child hierarchy, without extra planning or review categories.
+Click **Checklist icon + 任务 (Tasks)** in the session header to open the **待办任务清单 (To-do checklist)** panel on the right. Tasks appear directly in their parent-child hierarchy, without extra planning or review categories.
 
 | Item | What it tells you |
 | --- | --- |
@@ -79,61 +99,4 @@ Build a knowledge-base import module. Plan the work first and delegate independe
 
 The model considers complexity and independence. Simple tasks or work requiring shared context stay in the owner session; suitable complex work can spawn a child. Children may split their work again, with inline execution used at the depth limit.
 
-A valid structured child result updates the task and notifies its direct parent. Requirement versions and execution IDs are checked so old results cannot overwrite changed requirements. The parent can then continue its remaining work.
-
-## ✏️ Add and edit — keep working on the same plan
-
-Identify the task to change in your message:
-
-```text
-Add a mobile check under the current task.
-Add a PDF import check under T-005.
-Update T-003 to require retries and clear error messages.
-Cancel T-006 and retain its history.
-Continue T-003.
-```
-
-New work defaults to the currently running or selected task. The main conversation may name a parent ID or unique full title. If no current task is identified, work attaches to the root plan; ambiguous names need clarification.
-
-![Task details and actions](https://raw.githubusercontent.com/Oak-liuhj/dsh-taskflow/main/docs/screenshots/task-detail.png)
-
-**Add child**, **Edit requirements** and **Continue in conversation** prefill the conversation input; send the message for the model to act. Cancellation and sibling reordering are direct interface actions. Adding children to completed work reopens the task and completed ancestors while preserving historical reports.
-
-## 🖥️ Tool views — show them when needed
-
-![Tool view to the left of the conversation](https://raw.githubusercontent.com/Oak-liuhj/dsh-taskflow/main/docs/screenshots/desktop-tool.png)
-
-The tool area starts closed. Actual browser, file, command or plugin tool calls can show their real address or output to the left of the conversation. Close the view when finished.
-
-Execution remains with host tools or their plugins. The default page view is a restricted iframe; CSP, authentication or cross-origin rules may prevent embedding. Other client plugins can register dedicated renderers through `taskflowViews.register(kind, Component)`; see the [architecture guide](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/docs/architecture.md).
-
-## ⚙️ Settings
-
-Adjust the plugin configuration in the profile you use. Defaults are in [cordis.patch.yml](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/cordis.patch.yml).
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `autoPlan` | `true` | Prompt the model to plan complex requests automatically; when disabled, request a plan explicitly. |
-| `maxDepth` | `2` | Maximum delegation depth, with the root at 0; range 0–8. |
-| `maxConcurrent` | `2` | Active delegation slots across the tree. Parents release their slot while waiting for children; range 1–16. |
-| `maxTasks` | `200` | Task limit per plan; range 1–2000. |
-| `provider` | `spawn` | Name of a registered host subagent provider. |
-| `dataDir` | `${DSH_HOME}/taskflow` | Ledger directory; falls back to `~/.dsh/taskflow` when the environment variable is unset. |
-
-## Notes
-
-- **Compatibility** — Current version **0.1.2**, Node.js **≥24.9.0**. The declared DSH range is `>=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0`. Enable `tools`, `agents`, `sessions`, `systemPrompt`, `subagents` and the corresponding client services.
-- **Planning and execution** — Automatic planning is model-guided. Task decomposition and tool choices depend on the host model. The ledger is independent of `todo_write`; later messages update the same plan incrementally.
-- **Data and recovery** — Use one active writer per `dataDir`. Back up the whole directory while the host is stopped, together with native DSH sessions for a complete migration. Interrupted tasks recover as paused and can be resumed in their owner conversation. Uninstalling the plugin preserves the ledger.
-- **Validation** — 30 automated tests, 12 version boundaries and deterministic-model integrations with exact hosts `0.2.1-rc.3`, `0.2.2-rc.2` and `0.2.2-rc.3` have passed. Full native profiles, production models and third-party tools still need acceptance; see the [acceptance record](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/docs/acceptance.md).
-- **Language** — Plugin documentation is available in Simplified Chinese and English. The task navigation interface currently uses Chinese labels.
-
-## Like it?
-
-Star the project on [GitHub](https://github.com/Oak-liuhj/dsh-taskflow), or open an [Issue](https://github.com/Oak-liuhj/dsh-taskflow/issues) / PR. Include plugin and DSH versions, profile type, reproduction steps and redacted logs when reporting a problem.
-
-See the [development guide](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/docs/DEVELOPMENT.md) and [publishing guide](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/docs/PUBLISHING.md) for contributions.
-
-## License
-
-Original code is [Apache-2.0](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/LICENSE). Imported DeepSeek styles and icons retain their MIT license; see [NOTICE](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/NOTICE) and [DeepSeek-MIT.txt](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/licenses/DeepSeek-MIT.txt). The source PRD embeds an OFL-1.1 font; the font and complete PRD are excluded from the npm runtime package. This is a community plugin.
+High-complexity independent work (`high` + `independent: true`) automatically delegates, subject to depth limits. Planning only creates the checklist. Inline records appear when their task starts; delegated execution sessions appear when admitted by the scheduler. Unstarted tasks do not create sidebar sessions. Existing prematurely created records are preserved but hidden until execution. Nested inline items attach to their parent task's record. Every running medium/high-complexity item, including child items, requires a model decision to split or execute directly; decisions persist per task version. Completed results and original attempt history are preserved.

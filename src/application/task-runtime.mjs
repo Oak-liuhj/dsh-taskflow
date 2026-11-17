@@ -63,8 +63,11 @@ export class TaskRuntime {
         label: `${task.id} ${task.title}`, outputSchema: RESULT_SCHEMA,
         prompt: [{ type: 'text', text: [
           `你负责 ${task.id}：${task.title}。`, `整体目标：${plan.goal}`, `执行要求：${task.instructions}`, `完成标准：${task.criteria}`,
-          '你可根据难度通过 taskflow_add 增加下级事项，再用 taskflow_start 启动。简单事项留在本会话。',
+          `本事项复杂度：${task.complexity}。执行前先判断是否需要拆解：需要则 taskflow_add 在本事项下增加具体子事项，再逐项 taskflow_start；无需拆解则 taskflow_assess(needsPlan:false, reason, taskId:"${task.id}") 保存判断依据。子事项执行时也要按自身复杂度判断，可再次拆解孙事项。简单事项留在本会话。`,
+          '先 taskflow_status 读取现有下级，按原 ID 继续未完成事项；保留完成记录，不重复规划。high 且 independent=true 的事项应委派；不要将其强制标为 inline。',
+          `本次任务历史结果：${task.report?.summary ?? '无'}。现有下级：${JSON.stringify(children(plan, task.id).map(t => ({ id: t.id, status: t.status, report: t.report })))}`,
           '有下级事项时先用 taskflow_wait 等待其结果，再完成本层剩余工作。完成下级不代表你已完成。',
+          '实际执行过程、关键发现与阶段结果保留在当前子会话，通过 taskflow_progress 保存；不要把中间过程逐条发回父任务。最终结果保存到本子会话后，仅通知直接父任务完成摘要与证据。',
           '最终返回结构化结果 {"status":"completed|blocked|failed","summary":"实际结果与证据"}。不需父会话复核。',
           '只能报告实际完成的工作；失败或缺少输入时返回 failed/blocked。不要调用原生委派工具绕过任务树。',
           `依赖结果：${JSON.stringify(task.dependsOn.map(id => ({ id, report: plan.tasks[id].report })))}`,
@@ -72,6 +75,7 @@ export class TaskRuntime {
       });
       if (activation.childId !== childId) throw new Error('宿主未使用已持久化的子会话 ID');
       run.activation = activation;
+      await this.service.activationReady(plan.id, task.id, run.attemptId);
       const result = await activation.result;
       if (result.stopReason !== 'completed') throw new Error(`子任务停止：${result.stopReason}`);
       const report = result.structured;
@@ -102,7 +106,12 @@ export class TaskRuntime {
         await this.service.store.transaction(s => { const n = s.outbox.find(n => n.id === notice.id); if (n) { n.delivered = true; n.superseded = true; } });
         continue;
       }
-      try { if (await this.host.notify(notice) !== false) await this.service.store.transaction(s => { const live = s.outbox.find(n => n.id === notice.id); if (live) live.delivered = true; }); }
+      try {
+        if (await this.host.recordResult?.(notice) === false) continue;
+        const current = this.service.store.read().plans[notice.planId]?.tasks[notice.taskId];
+        if (current?.status !== 'completed' || current.version !== notice.report.version || current.attempt?.id !== notice.report.attemptId) continue;
+        if (await this.host.notify(notice) !== false) await this.service.store.transaction(s => { const live = s.outbox.find(n => n.id === notice.id); if (live) live.delivered = true; });
+      }
       catch (error) { this.host.log?.(error); }
     }
   }

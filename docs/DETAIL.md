@@ -1,6 +1,6 @@
 # Taskflow
 
-A DeepSeek Harness plugin (0.1.2) for persistent task trees, selective nested
+A DeepSeek Harness plugin (0.1.3) for persistent task trees, selective nested
 sessions and direct-parent completion notifications.
 
 ## Requirements
@@ -27,9 +27,21 @@ and retains the old report.
 
 The right panel displays the hierarchy. Use the detail menu to add or edit a task;
 these actions prefill the conversation and take effect after sending. Cancellation
-and sibling reordering are direct interface actions.
+and sibling reordering are direct interface actions. Start/Continue submits a real follow-up to the durable main agent without overwriting your draft. It reports acceptance/errors; external blockers remain explicit. Actual child sessions, grandchildren and retry history appear below the main session in the left navigation, using direct-parent addresses. Tool views support horizontal resizing, floating, dragging, and docking, with per-session local layout preferences.
 
 ## Data and tools
+
+The session list uses the prototype's chat and expand icons, state dots and
+hierarchy guides. Planning does not create child sessions: inline records appear
+on start and delegated sessions on scheduler admission. Existing unstarted records
+are preserved but hidden. Nested records attach to their task parent. Every medium/high
+task requires a model decision to split or execute directly, recursively at each level.
+
+Above the composer, the current model generates 3–5 quick replies from recent
+conversation and task state using an extra short request. Unchanged context is
+cached; busy sessions wait and failures offer specific diagnoses and retry. Requests allow
+4096 tokens including reasoning and a 60-second timeout. Clicking appends to the draft
+without sending or removing references. Set quickReplies=false to disable.
 
 The ledger defaults to `${DSH_HOME}/taskflow` or `~/.dsh/taskflow`. One active writer
 is allowed per directory. Back up the directory while the host is stopped, and
@@ -37,9 +49,24 @@ also back up native DSH sessions for a complete migration. Interrupted work paus
 on recovery; it is not automatically rerun.
 
 Tools remain host-owned. Taskflow displays actual URLs or text to the left of the
-conversation on demand. The default browser surface is a restricted iframe, not
-a browser automation engine. Embedded pages may fail due to CSP, authentication
-or cross-origin restrictions. Other plugins may register dedicated renderers.
+conversation on demand. Markdown, Excel, Word, PowerPoint and PDF files automatically
+open through host document preview plugins inside the tool panel, without choosing
+a file or viewer. Taskflow does not read document content directly; the host owns
+file access, rendering and authorization. Browser results open through the host Browser plugin.
+This does not imply shared authentication or live state with external automation
+browsers. Files require explicit successful output paths; terminal scripts without
+structured paths should use taskflow_open_view with the actual filePath.
+Missing plugins offer visible feedback and retry; file load errors appear in the host viewer.
+
+The Tasks entry toggles the checklist. Task progress and key results are saved through
+taskflow_progress in the current child session, including records for inline work.
+Only the final completion summary is notified to the parent after durable result storage.
+
+Running tasks show an animated progress icon and “进行中” in both the checklist
+and child-session list. Waiting, blocked, paused and completed tasks stop rotating.
+State polls every 1.2 seconds. Other plugins may register dedicated renderers.
+
+The tool view keeps a compact header and fills its remaining height with document previews, without visible paths, reopen controls or success notices. Multiple documents scroll vertically; failures retain a retry action. The docked checklist starts at 300px; drag its left edge to resize, and the preference is remembered. Narrow windows temporarily constrain the width. Fullscreen, floating tabs and other plugin pages retain the host layout. Suggested replies show a small spinner and a left-aligned loading label while waiting for the current response or generating suggestions, until ready or failed. Waiting does not start another model call.
 
 ## Validation status
 

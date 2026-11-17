@@ -4,5 +4,5 @@ import z from '@deepseek-ai/schemastery';
 export const Config = z.object({
   dataDir: z.string(), maxDepth: z.number().step(1).min(0).max(8).default(2),
   maxConcurrent: z.number().step(1).min(1).max(16).default(2), maxTasks: z.number().step(1).min(1).max(2000).default(200),
-  autoPlan: z.boolean().default(true), provider: z.string().default('spawn'),
+  autoPlan: z.boolean().default(true), quickReplies: z.boolean().default(true), provider: z.string().default('spawn'),
 });

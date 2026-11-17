@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { normalizeDocuments } from './tool-view.mjs';
 
 const terminal = task => ['completed', 'cancelled'].includes(task.status);
 export class TaskflowError extends Error { constructor(code, message) { super(message); this.code = code; } }
@@ -13,8 +14,20 @@ export function resolveTask(plan, ref) {
   return found[0];
 }
 export function sessionPlan(state, sessionId) { return Object.hasOwn(state.sessions, sessionId) ? state.plans[state.sessions[sessionId]] : undefined; }
-export function ownerOf(plan, task) { return task.parentId ? plan.tasks[task.parentId].executionSessionId ?? ownerOf(plan, plan.tasks[task.parentId]) : plan.rootSessionId; }
+export function ownerOf(plan, task) { const parent = plan.tasks[task.parentId]; return parent ? parent.mode === 'delegate' && parent.executionSessionId ? parent.executionSessionId : ownerOf(plan, parent) : plan.rootSessionId; }
+export function recordParentOf(plan, task) {
+  const parent = plan.tasks[task.parentId];
+  if (!parent) return plan.rootSessionId;
+  // A completed result belongs to the attempt that actually produced it.
+  // Parent retries must not duplicate/reparent that successful history.
+  const original = task.recordSession?.created && task.recordSession.parentSessionId;
+  if (terminal(task) && original && (parent.sessionHistory?.some(h => h.sessionId === original) || parent.recordHistory?.some(h => h.id === original))) return original;
+  if (parent.mode === 'inline') return parent.recordSession?.created ? parent.recordSession.id : null;
+  return parent.executionSessionId && parent.executionCreated !== false ? parent.executionSessionId : null;
+}
 export function currentTask(plan, sid) {
+  const record = Object.values(plan.tasks).find(t => t.recordSession?.id === sid || t.recordHistory?.some(r => r.id === sid));
+  if (record) return record;
   const focused = plan.active[sid];
   return focused && plan.tasks[focused] ? plan.tasks[focused] : Object.values(plan.tasks).find(t => t.executionSessionId === sid && t.mode === 'delegate');
 }
@@ -29,10 +42,19 @@ export function delegationDepth(plan, task) {
 }
 function authorize(plan, sid, task) {
   if (sid === plan.rootSessionId) return;
-  const bound = Object.values(plan.tasks).find(t => t.executionSessionId === sid && t.mode === 'delegate');
+  const bound = Object.values(plan.tasks).find(t => (t.executionSessionId === sid && t.mode === 'delegate') || t.recordSession?.id === sid);
   if (!bound || (task.id !== bound.id && !descendants(plan, bound.id).some(t => t.id === task.id))) fail('forbidden', '只能操作当前会话负责的任务及其下级');
 }
 function validateGraph(plan) {
+  // A parent cannot finish until its descendants finish. Depending on a
+  // completed ancestor deadlocks that contract; explain how to model phases.
+  for (const t of Object.values(plan.tasks)) {
+    const seen = new Set([t.id]);
+    for (let parent = plan.tasks[t.parentId]; parent && !seen.has(parent.id); parent = plan.tasks[parent.parentId]) {
+      seen.add(parent.id);
+      if (t.dependsOn.includes(parent.id)) fail('cycle', `${t.id} 不能依赖父任务或祖先 ${parent.id} 完成：parentId 表示组成归属，dependsOn 表示执行先后；若是先后阶段，请设为同级任务再添加依赖`);
+    }
+  }
   const visiting = new Set(), visited = new Set();
   const visit = id => { if (visiting.has(id)) fail('cycle', '任务依赖或层级存在循环'); if (visited.has(id)) return; const t = plan.tasks[id]; if (!t) fail('not-found', `依赖任务不存在：${id}`); visiting.add(id); for (const d of [...t.dependsOn, ...children(plan, id).map(c => c.id)]) visit(d); visiting.delete(id); visited.add(id); };
   Object.keys(plan.tasks).forEach(visit);
@@ -50,6 +72,14 @@ export class TaskService {
   async change(operation) { const value = await this.store.transaction(operation); for (const listener of this.listeners) { try { listener(); } catch {} } return value; }
   view(sid) { const state = this.store.read(), plan = sessionPlan(state, sid); return { revision: state.revision, plan: plan ?? null, currentTaskId: plan ? currentTask(plan, sid)?.id ?? null : null, tool: plan?.views[sid] ?? null, limits: this.options }; }
   scope(state, sid) { const plan = sessionPlan(state, sid); if (!plan) fail('no-plan', '当前会话尚未建立任务计划'); return plan; }
+  continuation(sid, ref, version) {
+    const p = this.scope(this.store.read(), sid), t = resolveTask(p, ref); authorize(p, sid, t);
+    if (t.version !== version) fail('stale', '任务要求已变更，请刷新后重试');
+    if (!['pending', 'paused', 'blocked', 'failed'].includes(t.status)) fail('state', '任务当前不可继续，请刷新状态');
+    const ancestors = []; for (let a = p.tasks[t.parentId]; a; a = p.tasks[a.parentId]) ancestors.unshift(a);
+    if (ancestors.some(a => a.status === 'cancelled')) fail('cancelled', '父任务已取消');
+    return structuredClone({ rootSessionId: p.rootSessionId, task: t, ancestors });
+  }
   async create(sid, input) {
     return this.change(state => {
       if (typeof sid !== 'string' || !sid || ['__proto__', 'prototype', 'constructor'].includes(sid)) fail('invalid', '会话 ID 无效');
@@ -69,7 +99,8 @@ export class TaskService {
       if (input.ref) aliases.set(input.ref, id);
       const complexity = input.complexity ?? 'low';
       if (!['low', 'medium', 'high'].includes(complexity)) fail('invalid', '未知任务复杂度');
-      const mode = input.mode ?? (complexity !== 'low' && input.independent === true ? 'delegate' : 'inline');
+      if (input.mode !== undefined && !['inline', 'delegate'].includes(input.mode)) fail('invalid', '未知执行方式');
+      const mode = complexity === 'high' && input.independent === true ? 'delegate' : input.mode ?? (complexity !== 'low' && input.independent === true ? 'delegate' : 'inline');
       if (!['inline', 'delegate'].includes(mode)) fail('invalid', '未知执行方式');
       const task = { id, title: text(input.title, '任务标题', 240), instructions: text(input.instructions ?? input.title, '任务要求'), criteria: text(input.criteria ?? '完成任务目标并保存结果', '完成标准'), parentId: defaultParent, dependsOn: [], complexity, independent: input.independent === true, mode, status: 'pending', version: 1, attempts: 0, attempt: null, executionSessionId: null, report: null, history: [] };
       plan.tasks[id] = task; created.push({ task, input });
@@ -100,6 +131,7 @@ export class TaskService {
       if (patch.complexity !== undefined) { if (!['low', 'medium', 'high'].includes(patch.complexity)) fail('invalid', '未知任务复杂度'); t.complexity = patch.complexity; }
       if (patch.independent !== undefined) { if (typeof patch.independent !== 'boolean') fail('invalid', 'independent 必须为布尔值'); t.independent = patch.independent; }
       if (patch.mode !== undefined) { if (!['inline', 'delegate'].includes(patch.mode)) fail('invalid', '未知执行方式'); t.mode = patch.mode; }
+      if (t.complexity === 'high' && t.independent) t.mode = 'delegate';
       if (patch.dependsOn !== undefined) { if (!Array.isArray(patch.dependsOn)) fail('invalid', '依赖必须是数组'); t.dependsOn = patch.dependsOn.map(r => resolveTask(p, r).id); }
       if (patch.parentId !== undefined) {
         if (patch.parentId === null) { if (sid !== p.rootSessionId) fail('forbidden', '只有主会话能移动为根任务'); t.parentId = null; }
@@ -122,9 +154,12 @@ export class TaskService {
       if (!['pending', 'paused', 'blocked', 'failed'].includes(t.status)) fail('state', '任务当前不可启动');
       if (!t.dependsOn.every(id => p.tasks[id]?.status === 'completed')) fail('dependency', '前置任务尚未完成');
       for (let ancestor = p.tasks[t.parentId]; ancestor; ancestor = p.tasks[ancestor.parentId]) if (ancestor.mode === 'delegate' && (!ancestor.executionSessionId || !['running', 'awaiting_children'].includes(ancestor.status))) fail('owner', '请先启动负责此事项的父任务，不能将下级会话改挂到主会话');
+      for (let ancestor = p.tasks[t.parentId]; ancestor; ancestor = p.tasks[ancestor.parentId]) if (ancestor.mode === 'inline' && !ancestor.attempts) fail('owner', '请先启动父任务，再执行其下级，不能为尚未执行的父事项提前创建会话');
       // Resolve the limit synchronously so the model sees inline in start's result,
       // instead of queueing a child that can never run while its parent waits.
-      if (t.mode === 'delegate' && delegationDepth(p, t) >= this.options.maxDepth) t.mode = 'inline';
+      if (t.complexity === 'high' && t.independent) t.mode = 'delegate';
+      if (t.mode === 'delegate' && delegationDepth(p, t) >= this.options.maxDepth) { t.mode = 'inline'; t.executionReason = '达到子会话深度上限，在当前会话执行'; }
+      else t.executionReason = t.mode === 'delegate' ? '独立事项，委派子会话执行' : '简单或共享上下文事项，在当前会话执行';
       if (t.mode === 'inline' && ownerOf(p, t) !== sid) fail('forbidden', '请在负责此任务的会话执行');
       const ancestors = new Set(); for (let x = p.tasks[t.parentId]; x; x = p.tasks[x.parentId]) ancestors.add(x.id);
       if (t.mode === 'inline' && Object.values(p.tasks).some(x => x.id !== t.id && !ancestors.has(x.id) && x.executionSessionId === sid && x.mode === 'inline' && x.status === 'running')) fail('busy', '当前会话已有执行事项');
@@ -135,7 +170,39 @@ export class TaskService {
   }
   async bind(planId, taskId, attemptId, childId) {
     return this.change(state => { const p = state.plans[planId], t = p?.tasks[taskId]; if (!t || t.attempt?.id !== attemptId || t.status !== 'queued') fail('stale', '执行已过期');
-      t.status = 'running'; t.executionSessionId = childId; state.sessions[childId] = p.id; p.active[childId] = t.id; stamp(p, 'delegate', t.id, childId);
+      if (t.executionSessionId && t.executionSessionId !== childId && t.executionCreated !== false) {
+        t.sessionHistory ??= [];
+        t.sessionHistory.push({ sessionId: t.executionSessionId, parentSessionId: t.executionParentSessionId || ownerOf(p, t), status: t.report?.status || 'paused' });
+      }
+      t.executionCreated = false;
+      t.executionParentSessionId = ownerOf(p, t); t.status = 'running'; t.executionSessionId = childId; state.sessions[childId] = p.id; p.active[childId] = t.id; stamp(p, 'delegate', t.id, childId);
+    });
+  }
+  async activationReady(planId, taskId, attemptId) { return this.change(state => { const t = state.plans[planId]?.tasks[taskId]; if (t?.attempt?.id === attemptId) t.executionCreated = true; }); }
+  async reserveRecord(planId, taskId) {
+    return this.change(state => {
+      const p = state.plans[planId], t = p?.tasks[taskId];
+      if (!t || t.mode !== 'inline') fail('state', '该事项不是行内任务');
+      if (!t.attempts) fail('state', '事项尚未执行，不创建子会话');
+      const parentSessionId = recordParentOf(p, t);
+      if (!parentSessionId) fail('owner', '父事项会话尚未创建，稍后按原层级建立记录');
+      if (t.recordSession?.parentSessionId === parentSessionId) return structuredClone(t.recordSession);
+      if (t.recordSession) { t.recordHistory ??= []; t.recordHistory.push({ ...t.recordSession, status: t.report?.status || 'paused' }); }
+      t.recordSession = { id: randomUUID(), parentSessionId, created: false };
+      state.sessions[t.recordSession.id] = p.id;
+      return structuredClone(t.recordSession);
+    });
+  }
+  async recordReady(planId, taskId, recordId) { return this.change(state => { const p = state.plans[planId], t = p?.tasks[taskId]; if (t?.recordSession?.id === recordId) { t.recordSession.created = true; delete t.recordError; stamp(p, 'record', taskId, '行内事项子会话记录已保存'); } }); }
+  async recordError(planId, taskId, message) { return this.change(state => { const t = state.plans[planId]?.tasks[taskId]; if (t) t.recordError = String(message).slice(0, 1000); }); }
+  async assessDecomposition(sid, ref, needsSplit, reason) {
+    return this.change(state => {
+      const p = this.scope(state, sid), t = resolveTask(p, ref); authorize(p, sid, t);
+      if (t.executionSessionId !== sid || !['running', 'awaiting_children'].includes(t.status)) fail('state', '只能判断当前执行会话正在负责的事项');
+      if (typeof needsSplit !== 'boolean') fail('invalid', '是否拆解必须为布尔值');
+      t.decomposition = { version: t.version, needsSplit, reason: text(reason, '拆解依据', 2000), at: new Date().toISOString() };
+      stamp(p, 'assess', t.id, needsSplit ? '模型判定需要拆解下级事项' : '模型判定本层直接执行');
+      return { taskId: t.id, ...structuredClone(t.decomposition), message: needsSplit ? '请用 taskflow_add 保存下级事项，然后逐项启动；不要重建主计划' : '本层直接执行，完成后提交实际结果' };
     });
   }
   async wait(sid, ref) { return this.change(state => { const p = this.scope(state, sid), t = resolveTask(p, ref); if (t.executionSessionId !== sid || t.status !== 'running') fail('state', '当前任务未在本会话执行'); t.status = 'awaiting_children'; stamp(p, 'wait', t.id, '等待下级任务，释放并发名额'); }); }
@@ -158,8 +225,10 @@ export class TaskService {
   }
   async openView(sid, input) {
     return this.change(state => { const p = this.scope(state, sid); if (!['browser', 'editor', 'terminal', 'plugin', 'orchestration'].includes(input.kind)) fail('invalid', '未知工具视图');
+      if (input.expectedId && (p.views[sid]?.id !== input.expectedId || (input.requireOpen && !p.views[sid]?.open))) return;
       if (input.url) { const u = new URL(input.url); if (!['https:', 'http:'].includes(u.protocol) || u.username || u.password) fail('invalid', '浏览器地址必须为不含凭据的 HTTP(S) URL'); }
-      p.views[sid] = { kind: input.kind, title: String(input.title ?? input.kind).slice(0, 240), url: input.url ?? null, content: String(input.content ?? '').slice(0, 100000), open: true, taskId: currentTask(p, sid)?.id ?? null }; stamp(p, 'tool', p.views[sid].taskId, input.kind);
+      if (input.filePath && !normalizeDocuments(input).some(f => f.path === input.filePath)) fail('invalid', '文件路径必须为支持预览的本地或工作区文档路径');
+      p.views[sid] = { id: input.id || randomUUID(), kind: input.kind, title: String(input.title ?? input.kind).slice(0, 240), url: input.url ?? null, files: normalizeDocuments(input), phase: ['running', 'failed'].includes(input.phase) ? input.phase : 'ready', autoOpen: input.autoOpen !== false, sourceTool: String(input.sourceTool ?? '').slice(0, 240), content: String(input.content ?? '').slice(0, 100000), open: true, taskId: currentTask(p, sid)?.id ?? null }; stamp(p, 'tool', p.views[sid].taskId, input.kind);
     });
   }
   async closeView(sid) { return this.change(state => { const p = this.scope(state, sid); if (p.views[sid]) p.views[sid].open = false; }); }

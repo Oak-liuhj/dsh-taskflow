@@ -58,19 +58,69 @@ __export(client_exports, {
   inject: () => inject
 });
 module.exports = __toCommonJS(client_exports);
-var import_react6 = __toESM(require("react"));
-var import_react_dom2 = require("react-dom");
+var import_react13 = __toESM(require("react"));
+var import_react_dom4 = require("react-dom");
 
 // taskflow-source:src/client/components/task-panel.jsx
-var import_react3 = __toESM(require("react"));
+var import_react5 = __toESM(require("react"));
 
 // taskflow-source:src/client/model.mjs
-var STATUS = { pending: "待执行", queued: "排队中", running: "执行中", awaiting_children: "等待下级", paused: "已暂停", blocked: "受阻", failed: "失败", completed: "已完成", cancelled: "已取消" };
+var STATUS = { pending: "待执行", queued: "排队中", running: "进行中", awaiting_children: "等待下级", paused: "已暂停", blocked: "受阻", failed: "失败", completed: "已完成", cancelled: "已取消" };
 var TOOL_NAMES = { browser: "浏览器", editor: "编辑器", terminal: "终端", plugin: "插件", orchestration: "编排" };
+function taskOwner(plan, task) {
+  const parent = plan.tasks[task.parentId];
+  return parent ? parent.mode === "delegate" && parent.executionSessionId ? parent.executionSessionId : taskOwner(plan, parent) : plan.rootSessionId;
+}
+function taskTarget(plan, task) {
+  if (task.mode === "delegate" && task.executionSessionId && task.executionCreated !== false) return { parentSessionId: task.executionParentSessionId || taskOwner(plan, task), childSessionId: task.executionSessionId, mode: "unknown" };
+  if (task.recordSession?.created) return { parentSessionId: task.recordSession.parentSessionId, childSessionId: task.recordSession.id, mode: "one-shot" };
+  const owner = taskOwner(plan, task);
+  const parent = Object.values(plan.tasks).find((t) => t.mode === "delegate" && t.executionSessionId === owner);
+  return parent ? taskTarget(plan, parent) : owner;
+}
+function executionTarget(plan, task) {
+  const sid = task.executionSessionId || taskOwner(plan, task);
+  const parent = Object.values(plan.tasks).find((t) => t.mode === "delegate" && t.executionSessionId === sid);
+  return parent ? taskTarget(plan, parent) : sid;
+}
+function sessionTree(plan) {
+  if (!plan) return [];
+  const nodes = Object.values(plan.tasks).flatMap((t) => [
+    ...(t.sessionHistory ?? []).map((h) => ({ ...t, title: `${t.title}（历史执行）`, status: h.status, executionSessionId: h.sessionId, target: { parentSessionId: h.parentSessionId, childSessionId: h.sessionId, mode: "unknown" }, children: [] })),
+    ...t.mode === "delegate" && t.executionSessionId && t.executionCreated !== false ? [{ ...t, target: taskTarget(plan, t), children: [] }] : [],
+    ...[...t.recordHistory ?? [], ...t.recordSession ? [t.recordSession] : []].filter((r) => r.created && t.attempts > 0).map((r) => ({ ...t, title: r === t.recordSession && t.mode === "inline" ? t.title : `${t.title}（历史执行记录）`, status: r === t.recordSession && t.mode === "inline" ? t.status : r.status || t.report?.status || "paused", executionSessionId: r.id, target: { parentSessionId: r.parentSessionId, childSessionId: r.id, mode: "one-shot" }, children: [] }))
+  ]);
+  const bySession = new Map(nodes.map((t) => [t.executionSessionId, t])), roots = [];
+  for (const t of nodes) {
+    const parent = bySession.get(t.target.parentSessionId);
+    (parent && parent !== t ? parent.children : roots).push(t);
+  }
+  return roots;
+}
+function sessionPath(plan, sessionId) {
+  if (!plan) return [];
+  const root = { sessionId: plan.rootSessionId, title: plan.title, target: plan.rootSessionId };
+  const find = (nodes, path) => {
+    for (const t of nodes) {
+      const next = [...path, { sessionId: t.executionSessionId, title: `${t.id} ${t.title}`, target: t.target }];
+      if (t.executionSessionId === sessionId) return next;
+      const found = find(t.children, next);
+      if (found) return found;
+    }
+  };
+  return sessionId === root.sessionId ? [root] : find(sessionTree(plan), [root]) ?? [];
+}
+function executionLabel(plan, task, sessionId) {
+  if (task.mode === "delegate") return task.executionSessionId && task.executionCreated !== false ? "独立子会话" : "按需委派";
+  const owner = taskOwner(plan, task);
+  if (owner === sessionId) return "本会话内执行";
+  const parent = Object.values(plan.tasks).find((t) => t.mode === "delegate" && t.executionSessionId === owner);
+  return parent ? `在 ${parent.id} 会话内执行` : "在主会话内执行";
+}
 function visibleTree(plan, { filter = "all", scope = "global", sessionId } = {}) {
   if (!plan) return [];
   const all = Object.values(plan.tasks), kept = /* @__PURE__ */ new Set();
-  const matches = (t) => (filter === "all" || (filter === "active" ? !["completed", "cancelled"].includes(t.status) : t.status === filter)) && (scope === "global" || t.executionSessionId === sessionId || (t.parentId ? plan.tasks[t.parentId].executionSessionId : plan.rootSessionId) === sessionId);
+  const matches = (t) => (filter === "all" || (filter === "active" ? !["completed", "cancelled"].includes(t.status) : t.status === filter)) && (scope === "global" || t.executionSessionId === sessionId || t.recordSession?.id === sessionId || t.recordHistory?.some((r) => r.id === sessionId) || (t.parentId ? plan.tasks[t.parentId].executionSessionId : plan.rootSessionId) === sessionId);
   for (const t of all.filter(matches)) {
     for (let x = t; x; x = plan.tasks[x.parentId]) {
       if (kept.has(x.id)) break;
@@ -86,23 +136,29 @@ function progress(plan) {
   return { done, total: roots.length, percent: roots.length ? Math.round(done / roots.length * 100) : 0 };
 }
 
-// taskflow-source:src/client/generated/icons.jsx
+// taskflow-source:src/client/components/task-icon.jsx
 var import_react = __toESM(require("react"));
+function TaskIcon(props) {
+  return /* @__PURE__ */ import_react.default.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", ...props }, /* @__PURE__ */ import_react.default.createElement("rect", { x: "3", y: "3", width: "4", height: "4", rx: "1" }), /* @__PURE__ */ import_react.default.createElement("rect", { x: "3", y: "10", width: "4", height: "4", rx: "1" }), /* @__PURE__ */ import_react.default.createElement("rect", { x: "3", y: "17", width: "4", height: "4", rx: "1" }), /* @__PURE__ */ import_react.default.createElement("path", { d: "M11 5h10M11 12h10M11 19h10" }));
+}
+
+// taskflow-source:src/client/generated/icons.jsx
+var import_react2 = __toESM(require("react"));
 var paths = { layers: "m12 3 9 5-9 5-9-5 9-5zm-9 9 9 5 9-5M3 16l9 5 9-5", chat: "M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6A8.4 8.4 0 0 1 12.5 3h.5a8.5 8.5 0 0 1 8 8v.5z", check: "m5 12 4 4L19 6", chevron: "m9 5 7 7-7 7", arrow: "M5 12h14m-6-6 6 6-6 6", back: "M19 12H5m6-6-6 6 6 6", plus: "M12 5v14M5 12h14", search: "m21 21-4.3-4.3M19 10.5a8.5 8.5 0 1 1-17 0 8.5 8.5 0 0 1 17 0", browser: "M3 8h18M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2m1 2h.01M9 6h.01", code: "m8 6-6 6 6 6m8-12 6 6-6 6m-3-15-2 18", terminal: "m4 5 6 6-6 6m9 1h7", plugin: "M8 3v4H4v5h4v4h4v5h5v-5h4v-5h-4V7h-4V3H8z", settings: "M9 3h6l1 4 4 1 1 6-4 2-1 4H9l-1-4-4-1-1-6 4-2 2-4zm7 9a4 4 0 1 1-8 0 4 4 0 0 1 8 0", file: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm0 0v6h6M8 13h8m-8 4h6", branch: "M6 3v12a3 3 0 0 0 3 3h9M6 8h8a4 4 0 0 0 4-4m-9 14a3 3 0 1 1-6 0 3 3 0 0 1 6 0m12-15a3 3 0 1 1-6 0 3 3 0 0 1 6 0", clock: "M12 7v5l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0", download: "M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4", send: "m22 2-7 20-4-9-9-4 20-7zM22 2 11 13", close: "m6 6 12 12M6 18 18 6", upload: "M12 16V3M7 8l5-5 5 5M4 16v5h16v-5", refresh: "M20 7V3l-4 4a8 8 0 1 0 4 8M20 3h-5", lock: "M6 11h12v10H6zm3 0V7a3 3 0 0 1 6 0v4", expand: "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5", eye: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0", book: "M12 5s-4-3-9-2v16c5-1 9 2 9 2s4-3 9-2V3c-5-1-9 2-9 2zm0 0v16", info: "M12 11v6m0-10h.01m9 5a9 9 0 1 1-18 0 9 9 0 0 1 18 0", dots: "M5 12h.01M12 12h.01M19 12h.01" };
 paths.folder = "M3 7V5h6l2 2h10v13H3V7z";
 paths.panel = "M3 4h18v16H3zm7 0v16";
 paths.edit = "m16 3 5 5-12 12-6 1 1-6L16 3zm-3 3 5 5";
 paths.moon = "M20 15a9 9 0 0 1-11-11 9 9 0 1 0 11 11";
 function Icon({ name, ...props }) {
-  return /* @__PURE__ */ import_react.default.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", ...props }, /* @__PURE__ */ import_react.default.createElement("path", { d: paths[name] || paths.file }));
+  return /* @__PURE__ */ import_react2.default.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", ...props }, /* @__PURE__ */ import_react2.default.createElement("path", { d: paths[name] || paths.file }));
 }
 
 // taskflow-source:src/client/components/task-dialog.jsx
-var import_react2 = __toESM(require("react"));
+var import_react3 = __toESM(require("react"));
 var import_react_dom = require("react-dom");
 function TaskDialog({ title, subtitle, children, actions, onClose, closeLabel = "关闭任务详情" }) {
-  const ref = (0, import_react2.useRef)(null);
-  (0, import_react2.useEffect)(() => {
+  const ref = (0, import_react3.useRef)(null);
+  (0, import_react3.useEffect)(() => {
     const d = ref.current;
     if (typeof d.showModal === "function") d.showModal();
     else d.setAttribute("open", "");
@@ -110,7 +166,7 @@ function TaskDialog({ title, subtitle, children, actions, onClose, closeLabel = 
       if (d.open && typeof d.close === "function") d.close();
     };
   }, []);
-  return (0, import_react_dom.createPortal)(/* @__PURE__ */ import_react2.default.createElement("dialog", { ref, className: "tf-dialog", "aria-label": title, onCancel: (e) => {
+  return (0, import_react_dom.createPortal)(/* @__PURE__ */ import_react3.default.createElement("dialog", { ref, className: "tf-dialog", "aria-label": title, onCancel: (e) => {
     e.preventDefault();
     onClose();
   }, onClick: (e) => {
@@ -118,23 +174,33 @@ function TaskDialog({ title, subtitle, children, actions, onClose, closeLabel = 
       const r = ref.current.getBoundingClientRect();
       if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) onClose();
     }
-  } }, /* @__PURE__ */ import_react2.default.createElement("header", { className: "dialog-head" }, /* @__PURE__ */ import_react2.default.createElement("div", null, /* @__PURE__ */ import_react2.default.createElement("small", null, subtitle), /* @__PURE__ */ import_react2.default.createElement("h2", null, title)), /* @__PURE__ */ import_react2.default.createElement("button", { className: "iconbtn", "aria-label": closeLabel, onClick: onClose }, /* @__PURE__ */ import_react2.default.createElement(Icon, { name: "close" }))), /* @__PURE__ */ import_react2.default.createElement("div", { className: "dialog-body" }, children), actions && /* @__PURE__ */ import_react2.default.createElement("footer", { className: "dialog-actions" }, actions)), document.body);
+  } }, /* @__PURE__ */ import_react3.default.createElement("header", { className: "dialog-head" }, /* @__PURE__ */ import_react3.default.createElement("div", null, /* @__PURE__ */ import_react3.default.createElement("small", null, subtitle), /* @__PURE__ */ import_react3.default.createElement("h2", null, title)), /* @__PURE__ */ import_react3.default.createElement("button", { className: "iconbtn", "aria-label": closeLabel, onClick: onClose }, /* @__PURE__ */ import_react3.default.createElement(Icon, { name: "close" }))), /* @__PURE__ */ import_react3.default.createElement("div", { className: "dialog-body" }, children), actions && /* @__PURE__ */ import_react3.default.createElement("footer", { className: "dialog-actions" }, actions)), document.body);
+}
+
+// taskflow-source:src/client/components/task-spinner.jsx
+var import_react4 = __toESM(require("react"));
+function TaskSpinner({ label = "进行中" }) {
+  return /* @__PURE__ */ import_react4.default.createElement("svg", { className: "tf-task-spinner", viewBox: "0 0 24 24", role: "img", "aria-label": label }, /* @__PURE__ */ import_react4.default.createElement("circle", { cx: "12", cy: "12", r: "9", opacity: ".2" }), /* @__PURE__ */ import_react4.default.createElement("path", { d: "M12 3a9 9 0 0 1 9 9" }));
 }
 
 // taskflow-source:src/client/components/task-panel.jsx
 function TaskPanel({ view, sessionId, action, navigate, augment, onError }) {
-  const [filter, setFilter] = (0, import_react3.useState)("all"), [scope, setScope] = (0, import_react3.useState)("global"), [collapsed, setCollapsed] = (0, import_react3.useState)(/* @__PURE__ */ new Set()), [detail, setDetail] = (0, import_react3.useState)(null), [busy, setBusy] = (0, import_react3.useState)(false), [error, setError] = (0, import_react3.useState)("");
-  (0, import_react3.useEffect)(() => {
+  const [filter, setFilter] = (0, import_react5.useState)("all"), [scope, setScope] = (0, import_react5.useState)("global"), [collapsed, setCollapsed] = (0, import_react5.useState)(/* @__PURE__ */ new Set()), [detail, setDetail] = (0, import_react5.useState)(null), [busy, setBusy] = (0, import_react5.useState)(false), [error, setError] = (0, import_react5.useState)(""), [feedback, setFeedback] = (0, import_react5.useState)("");
+  (0, import_react5.useEffect)(() => {
     setDetail(null);
     setError("");
+    setFeedback("");
   }, [sessionId]);
-  const p = view.plan, pr = progress(p);
+  const p = view.plan, pr = progress(p), path = sessionPath(p, sessionId);
   const perform = async (type, data) => {
     if (busy) return;
     setBusy(true);
     setError("");
+    setFeedback("");
     try {
-      await action(type, data);
+      const result = await action(type, data);
+      if (result?.message) setFeedback(result.message);
+      if (type === "resume" && result?.accepted) setDetail(null);
     } catch (e) {
       setError(e.message);
       onError?.(e);
@@ -142,37 +208,176 @@ function TaskPanel({ view, sessionId, action, navigate, augment, onError }) {
       setBusy(false);
     }
   };
-  const prompt = (value) => {
-    augment(value);
-    setDetail(null);
+  const prompt = async (value) => {
+    try {
+      await augment(value);
+      setDetail(null);
+    } catch (e) {
+      setError(e.message);
+    }
   };
-  const row = (t) => /* @__PURE__ */ import_react3.default.createElement("div", { className: "task-node", key: t.id }, /* @__PURE__ */ import_react3.default.createElement("div", { className: `tf-row task-row ${t.status} ${view.currentTaskId === t.id ? "focused" : ""}`, "data-task-id": t.id, "data-status": t.status }, /* @__PURE__ */ import_react3.default.createElement("div", { className: "task-line" }, /* @__PURE__ */ import_react3.default.createElement("span", { className: `task-box ${t.status}`, "aria-label": STATUS[t.status] }, t.status === "completed" ? /* @__PURE__ */ import_react3.default.createElement(Icon, { name: "check" }) : t.status === "cancelled" ? "−" : null), /* @__PURE__ */ import_react3.default.createElement("div", { className: "task-copy" }, /* @__PURE__ */ import_react3.default.createElement("button", { className: "tf-task task-title", onClick: () => {
-    const target = t.executionSessionId || (t.parentId ? p.tasks[t.parentId].executionSessionId : p.rootSessionId);
-    if (target && target !== sessionId) navigate(target);
+  const row = (t) => /* @__PURE__ */ import_react5.default.createElement("div", { className: "task-node", key: t.id }, /* @__PURE__ */ import_react5.default.createElement("div", { className: `tf-row task-row ${t.status} ${view.currentTaskId === t.id ? "focused" : ""}`, "data-task-id": t.id, "data-status": t.status }, /* @__PURE__ */ import_react5.default.createElement("div", { className: "task-line" }, /* @__PURE__ */ import_react5.default.createElement("span", { className: `task-box ${t.status}`, "aria-label": STATUS[t.status] }, t.status === "running" ? /* @__PURE__ */ import_react5.default.createElement(TaskSpinner, { label: `${t.id} 进行中` }) : t.status === "completed" ? /* @__PURE__ */ import_react5.default.createElement(Icon, { name: "check" }) : t.status === "cancelled" ? "−" : null), /* @__PURE__ */ import_react5.default.createElement("div", { className: "task-copy" }, /* @__PURE__ */ import_react5.default.createElement("button", { className: "tf-task task-title", onClick: () => {
+    const target = taskTarget(p, t);
+    if ((typeof target === "string" ? target : target.childSessionId) !== sessionId) navigate(target);
     else void perform("focus", { taskId: t.id });
-  } }, t.title), /* @__PURE__ */ import_react3.default.createElement("div", { className: "task-meta" }, /* @__PURE__ */ import_react3.default.createElement("code", null, t.id), /* @__PURE__ */ import_react3.default.createElement("span", null, "· ", t.mode === "delegate" && t.executionSessionId ? "独立会话" : t.mode === "delegate" ? "按需委派" : "当前会话"), t.version > 1 && /* @__PURE__ */ import_react3.default.createElement("span", null, "v", t.version), t.children.length > 0 && /* @__PURE__ */ import_react3.default.createElement("button", { className: "tf-fold", "aria-label": `${collapsed.has(t.id) ? "展开" : "折叠"} ${t.title}`, onClick: () => setCollapsed((old) => {
+  } }, t.title), /* @__PURE__ */ import_react5.default.createElement("div", { className: "task-meta" }, /* @__PURE__ */ import_react5.default.createElement("code", null, t.id), /* @__PURE__ */ import_react5.default.createElement("span", { title: t.executionReason }, "· ", executionLabel(p, t, sessionId)), t.version > 1 && /* @__PURE__ */ import_react5.default.createElement("span", null, "v", t.version), t.children.length > 0 && /* @__PURE__ */ import_react5.default.createElement("button", { className: "tf-fold", "aria-label": `${collapsed.has(t.id) ? "展开" : "折叠"} ${t.title}`, onClick: () => setCollapsed((old) => {
     const n = new Set(old);
     n.has(t.id) ? n.delete(t.id) : n.add(t.id);
     return n;
-  }) }, /* @__PURE__ */ import_react3.default.createElement(Icon, { name: "chevron", style: { transform: collapsed.has(t.id) ? "" : "rotate(90deg)" } })))), /* @__PURE__ */ import_react3.default.createElement("button", { className: "iconbtn", "aria-label": `查看 ${t.id} 详情`, onClick: () => setDetail(t.id) }, /* @__PURE__ */ import_react3.default.createElement(Icon, { name: "dots" }))), !["completed", "cancelled"].includes(t.status) && /* @__PURE__ */ import_react3.default.createElement("div", { className: "task-status" }, /* @__PURE__ */ import_react3.default.createElement("span", { className: `pill ${t.status === "running" ? "blue" : ""}` }, /* @__PURE__ */ import_react3.default.createElement("i", { className: `dot ${t.status}` }), STATUS[t.status]), ["pending", "paused", "blocked", "failed"].includes(t.status) && /* @__PURE__ */ import_react3.default.createElement("button", { className: "btn small outline", onClick: () => prompt(`继续执行 ${t.id}，按当前要求完成任务。`) }, t.status === "pending" ? "开始" : "继续"))), !collapsed.has(t.id) && t.children.length > 0 && /* @__PURE__ */ import_react3.default.createElement("div", { className: "child-tasks" }, t.children.map(row)));
+  }) }, /* @__PURE__ */ import_react5.default.createElement(Icon, { name: "chevron", style: { transform: collapsed.has(t.id) ? "" : "rotate(90deg)" } })))), /* @__PURE__ */ import_react5.default.createElement("button", { className: "iconbtn", "aria-label": `查看 ${t.id} 详情`, onClick: () => setDetail(t.id) }, /* @__PURE__ */ import_react5.default.createElement(Icon, { name: "dots" }))), !["completed", "cancelled"].includes(t.status) && /* @__PURE__ */ import_react5.default.createElement("div", { className: "task-status" }, /* @__PURE__ */ import_react5.default.createElement("span", { className: `pill ${t.status === "running" ? "blue" : ""}` }, /* @__PURE__ */ import_react5.default.createElement("i", { className: `dot ${t.status}` }), STATUS[t.status]), ["pending", "paused", "blocked", "failed"].includes(t.status) && /* @__PURE__ */ import_react5.default.createElement("button", { className: "btn small outline", disabled: busy, onClick: () => void perform("resume", { taskId: t.id, version: t.version }) }, t.status === "pending" ? "开始" : "继续")), ["blocked", "failed"].includes(t.status) && /* @__PURE__ */ import_react5.default.createElement("p", { className: "tf-blocked-reason" }, /* @__PURE__ */ import_react5.default.createElement("strong", null, t.status === "blocked" ? "受阻原因：" : "失败原因："), t.report?.summary || "尚未记录原因，请查看会话详情。"), t.recordError && /* @__PURE__ */ import_react5.default.createElement("p", { className: "tf-blocked-reason", role: "status" }, "子会话记录待同步：", t.recordError)), !collapsed.has(t.id) && t.children.length > 0 && /* @__PURE__ */ import_react5.default.createElement("div", { className: "child-tasks" }, t.children.map(row)));
   const selected = p?.tasks[detail];
-  return /* @__PURE__ */ import_react3.default.createElement("section", { className: "tf-panel", "aria-label": "待办任务清单" }, /* @__PURE__ */ import_react3.default.createElement("header", { className: "plan-tabs" }, /* @__PURE__ */ import_react3.default.createElement("span", { className: "tab" }, /* @__PURE__ */ import_react3.default.createElement(Icon, { name: "check" }), "待办任务清单"), /* @__PURE__ */ import_react3.default.createElement("span", { className: "pill", style: { fontSize: 10 } }, "持久计划"), /* @__PURE__ */ import_react3.default.createElement("button", { className: "iconbtn", "aria-label": "查看任务动态", onClick: () => setDetail("activity") }, /* @__PURE__ */ import_react3.default.createElement(Icon, { name: "dots" }))), view.loading ? /* @__PURE__ */ import_react3.default.createElement("p", { className: "empty" }, "正在加载任务…") : !p ? /* @__PURE__ */ import_react3.default.createElement("div", { className: "empty" }, /* @__PURE__ */ import_react3.default.createElement(Icon, { name: "check" }), /* @__PURE__ */ import_react3.default.createElement("p", null, "暂无任务计划"), /* @__PURE__ */ import_react3.default.createElement("p", null, "在会话中描述目标，模型将根据任务复杂度规划待办。")) : /* @__PURE__ */ import_react3.default.createElement(import_react3.default.Fragment, null, /* @__PURE__ */ import_react3.default.createElement("div", { className: "plan-heading" }, /* @__PURE__ */ import_react3.default.createElement("h2", null, p.title), /* @__PURE__ */ import_react3.default.createElement("div", { className: "progress-label" }, /* @__PURE__ */ import_react3.default.createElement("strong", null, pr.done, " / ", pr.total, " 项已完成"), /* @__PURE__ */ import_react3.default.createElement("span", null, "v", p.version, " · ", pr.percent, "%")), /* @__PURE__ */ import_react3.default.createElement("div", { className: "progress-track", role: "progressbar", "aria-label": "根任务完成进度", "aria-valuenow": pr.percent, "aria-valuemin": 0, "aria-valuemax": 100 }, /* @__PURE__ */ import_react3.default.createElement("span", { style: { width: `${pr.percent}%` } }))), /* @__PURE__ */ import_react3.default.createElement("div", { className: "plan-controls" }, /* @__PURE__ */ import_react3.default.createElement("div", { className: "segments" }, [["global", "全局计划"], ["local", "当前会话"]].map(([id, title]) => /* @__PURE__ */ import_react3.default.createElement("button", { key: id, className: scope === id ? "selected" : "", "aria-pressed": scope === id, onClick: () => setScope(id) }, title))), /* @__PURE__ */ import_react3.default.createElement("select", { "aria-label": "任务筛选", value: filter, onChange: (e) => setFilter(e.target.value) }, /* @__PURE__ */ import_react3.default.createElement("option", { value: "all" }, "全部事项"), /* @__PURE__ */ import_react3.default.createElement("option", { value: "active" }, "未完成"), /* @__PURE__ */ import_react3.default.createElement("option", { value: "completed" }, "已完成"), /* @__PURE__ */ import_react3.default.createElement("option", { value: "cancelled" }, "已取消"))), /* @__PURE__ */ import_react3.default.createElement("div", { className: "task-list" }, visibleTree(p, { filter, scope, sessionId }).map(row)), /* @__PURE__ */ import_react3.default.createElement("footer", { className: "plan-bottom" }, /* @__PURE__ */ import_react3.default.createElement("button", { className: "btn outline", onClick: () => augment(view.currentTaskId ? `在 ${view.currentTaskId} 下新增一个` : "新增一个待办事项：") }, /* @__PURE__ */ import_react3.default.createElement(Icon, { name: "plus" }), view.currentTaskId ? "在当前任务下增补" : "在主任务下增补"), /* @__PURE__ */ import_react3.default.createElement("p", null, "稳定 ID · 跨轮保留 · 刷新恢复"))), (error || view.error) && /* @__PURE__ */ import_react3.default.createElement("p", { role: "alert", className: "tf-error" }, error || view.error), selected && /* @__PURE__ */ import_react3.default.createElement(TaskDialog, { title: selected.title, subtitle: `${selected.id} · 任务详情`, onClose: () => setDetail(null), actions: /* @__PURE__ */ import_react3.default.createElement(import_react3.default.Fragment, null, ["pending", "paused", "blocked", "failed"].includes(selected.status) && /* @__PURE__ */ import_react3.default.createElement("button", { className: "btn small primary", onClick: () => prompt(`继续执行 ${selected.id}，按当前要求完成任务。`) }, "在会话中继续"), selected.status !== "cancelled" && /* @__PURE__ */ import_react3.default.createElement(import_react3.default.Fragment, null, /* @__PURE__ */ import_react3.default.createElement("button", { className: "btn small outline", onClick: () => prompt(`在 ${selected.id} 下新增一个`) }, "增补下级事项"), /* @__PURE__ */ import_react3.default.createElement("button", { className: "btn small outline", onClick: () => prompt(`修改 ${selected.id} 的要求为：`) }, "修改要求")), !["cancelled", "completed"].includes(selected.status) && /* @__PURE__ */ import_react3.default.createElement("button", { className: "btn small danger", disabled: busy, onClick: () => void perform("cancel", { taskId: selected.id, version: selected.version }) }, "取消任务"), /* @__PURE__ */ import_react3.default.createElement("button", { className: "btn small", disabled: busy, onClick: () => void perform("reorder", { taskId: selected.id, direction: -1, expectedVersion: p.version }) }, "上移"), /* @__PURE__ */ import_react3.default.createElement("button", { className: "btn small", disabled: busy, onClick: () => void perform("reorder", { taskId: selected.id, direction: 1, expectedVersion: p.version }) }, "下移")) }, /* @__PURE__ */ import_react3.default.createElement("dl", { className: "detail-kv" }, /* @__PURE__ */ import_react3.default.createElement("dt", null, "状态"), /* @__PURE__ */ import_react3.default.createElement("dd", null, /* @__PURE__ */ import_react3.default.createElement("span", { className: "pill" }, STATUS[selected.status], " · v", selected.version)), /* @__PURE__ */ import_react3.default.createElement("dt", null, "执行方式"), /* @__PURE__ */ import_react3.default.createElement("dd", null, selected.mode === "delegate" ? "独立子会话" : "当前会话"), /* @__PURE__ */ import_react3.default.createElement("dt", null, "父级事项"), /* @__PURE__ */ import_react3.default.createElement("dd", null, selected.parentId || "主任务"), /* @__PURE__ */ import_react3.default.createElement("dt", null, "任务要求"), /* @__PURE__ */ import_react3.default.createElement("dd", null, selected.instructions || selected.title), /* @__PURE__ */ import_react3.default.createElement("dt", null, "完成标准"), /* @__PURE__ */ import_react3.default.createElement("dd", null, selected.criteria || "按当前任务要求完成")), selected.report && /* @__PURE__ */ import_react3.default.createElement("div", { className: "notice" }, /* @__PURE__ */ import_react3.default.createElement("strong", null, selected.report.version === selected.version ? "执行结果" : `历史结果 v${selected.report.version}（当前要求已变化）`), /* @__PURE__ */ import_react3.default.createElement("p", null, selected.report.summary)), error && /* @__PURE__ */ import_react3.default.createElement("p", { className: "tf-error", role: "alert" }, error)), detail === "activity" && p && /* @__PURE__ */ import_react3.default.createElement(TaskDialog, { title: "任务动态", subtitle: `持久计划 · v${p.version}`, closeLabel: "关闭任务动态", onClose: () => setDetail(null) }, [...p.events].reverse().map((e) => /* @__PURE__ */ import_react3.default.createElement("article", { className: "history", key: e.id }, /* @__PURE__ */ import_react3.default.createElement("time", null, e.at.replace("T", " ").slice(0, 19), " · ", e.taskId), e.detail))));
+  return /* @__PURE__ */ import_react5.default.createElement("section", { className: "tf-panel", "aria-label": "待办任务清单" }, /* @__PURE__ */ import_react5.default.createElement("header", { className: "plan-tabs" }, /* @__PURE__ */ import_react5.default.createElement("span", { className: "tab" }, /* @__PURE__ */ import_react5.default.createElement(TaskIcon, null), "待办任务清单"), /* @__PURE__ */ import_react5.default.createElement("span", { className: "pill", style: { fontSize: 10 } }, "持久计划"), /* @__PURE__ */ import_react5.default.createElement("button", { className: "iconbtn", "aria-label": "查看任务动态", onClick: () => setDetail("activity") }, /* @__PURE__ */ import_react5.default.createElement(Icon, { name: "dots" }))), view.loading ? /* @__PURE__ */ import_react5.default.createElement("p", { className: "empty" }, "正在加载任务…") : !p ? /* @__PURE__ */ import_react5.default.createElement("div", { className: "empty" }, /* @__PURE__ */ import_react5.default.createElement(Icon, { name: "check" }), /* @__PURE__ */ import_react5.default.createElement("p", null, "暂无任务计划"), /* @__PURE__ */ import_react5.default.createElement("p", null, "在会话中描述目标，模型将根据任务复杂度规划待办。")) : /* @__PURE__ */ import_react5.default.createElement(import_react5.default.Fragment, null, /* @__PURE__ */ import_react5.default.createElement("div", { className: "plan-heading" }, path.length > 1 && /* @__PURE__ */ import_react5.default.createElement("nav", { className: "tf-session-path", "aria-label": "会话层级" }, path.map((part, index) => /* @__PURE__ */ import_react5.default.createElement(import_react5.default.Fragment, { key: part.sessionId }, index > 0 && /* @__PURE__ */ import_react5.default.createElement("span", { "aria-hidden": "true" }, "/"), index === path.length - 1 ? /* @__PURE__ */ import_react5.default.createElement("span", { "aria-current": "page" }, part.title) : /* @__PURE__ */ import_react5.default.createElement("button", { onClick: () => navigate(part.target) }, part.title))), /* @__PURE__ */ import_react5.default.createElement("button", { onClick: () => navigate(path.at(-2).target) }, "返回父会话")), /* @__PURE__ */ import_react5.default.createElement("h2", null, p.title), /* @__PURE__ */ import_react5.default.createElement("div", { className: "progress-label" }, /* @__PURE__ */ import_react5.default.createElement("strong", null, pr.done, " / ", pr.total, " 项已完成"), /* @__PURE__ */ import_react5.default.createElement("span", null, "v", p.version, " · ", pr.percent, "%")), /* @__PURE__ */ import_react5.default.createElement("div", { className: "progress-track", role: "progressbar", "aria-label": "根任务完成进度", "aria-valuenow": pr.percent, "aria-valuemin": 0, "aria-valuemax": 100 }, /* @__PURE__ */ import_react5.default.createElement("span", { style: { width: `${pr.percent}%` } }))), /* @__PURE__ */ import_react5.default.createElement("div", { className: "plan-controls" }, /* @__PURE__ */ import_react5.default.createElement("div", { className: "segments" }, [["global", "全局计划"], ["local", "当前会话"]].map(([id, title]) => /* @__PURE__ */ import_react5.default.createElement("button", { key: id, className: scope === id ? "selected" : "", "aria-pressed": scope === id, onClick: () => setScope(id) }, title))), /* @__PURE__ */ import_react5.default.createElement("select", { "aria-label": "任务筛选", value: filter, onChange: (e) => setFilter(e.target.value) }, /* @__PURE__ */ import_react5.default.createElement("option", { value: "all" }, "全部事项"), /* @__PURE__ */ import_react5.default.createElement("option", { value: "active" }, "未完成"), /* @__PURE__ */ import_react5.default.createElement("option", { value: "completed" }, "已完成"), /* @__PURE__ */ import_react5.default.createElement("option", { value: "cancelled" }, "已取消"))), /* @__PURE__ */ import_react5.default.createElement("div", { className: "task-list" }, visibleTree(p, { filter, scope, sessionId }).map(row)), /* @__PURE__ */ import_react5.default.createElement("footer", { className: "plan-bottom" }, /* @__PURE__ */ import_react5.default.createElement("button", { className: "btn outline", onClick: () => void prompt(view.currentTaskId ? `在 ${view.currentTaskId} 下新增一个` : "新增一个待办事项：") }, /* @__PURE__ */ import_react5.default.createElement(Icon, { name: "plus" }), view.currentTaskId ? "在当前任务下增补" : "在主任务下增补"), /* @__PURE__ */ import_react5.default.createElement("p", null, "稳定 ID · 跨轮保留 · 刷新恢复"))), !p && view.planning && view.planning.phase !== "skipped" && /* @__PURE__ */ import_react5.default.createElement("p", { role: view.planning.phase === "blocked" ? "alert" : "status", className: view.planning.phase === "blocked" ? "tf-error" : "tf-planning" }, view.planning.message), feedback && /* @__PURE__ */ import_react5.default.createElement("p", { role: "status", className: "tf-feedback" }, feedback), (error || view.error) && /* @__PURE__ */ import_react5.default.createElement("p", { role: "alert", className: "tf-error" }, error || view.error), selected && /* @__PURE__ */ import_react5.default.createElement(TaskDialog, { title: selected.title, subtitle: `${selected.id} · 任务详情`, onClose: () => setDetail(null), actions: /* @__PURE__ */ import_react5.default.createElement(import_react5.default.Fragment, null, ["pending", "paused", "blocked", "failed"].includes(selected.status) && /* @__PURE__ */ import_react5.default.createElement("button", { className: "btn small primary", disabled: busy, onClick: () => void perform("resume", { taskId: selected.id, version: selected.version }) }, "继续执行"), selected.status !== "cancelled" && /* @__PURE__ */ import_react5.default.createElement(import_react5.default.Fragment, null, /* @__PURE__ */ import_react5.default.createElement("button", { className: "btn small outline", onClick: () => prompt(`在 ${selected.id} 下新增一个`) }, "增补下级事项"), /* @__PURE__ */ import_react5.default.createElement("button", { className: "btn small outline", onClick: () => prompt(`修改 ${selected.id} 的要求为：`) }, "修改要求")), !["cancelled", "completed"].includes(selected.status) && /* @__PURE__ */ import_react5.default.createElement("button", { className: "btn small danger", disabled: busy, onClick: () => void perform("cancel", { taskId: selected.id, version: selected.version }) }, "取消任务"), /* @__PURE__ */ import_react5.default.createElement("button", { className: "btn small", disabled: busy, onClick: () => void perform("reorder", { taskId: selected.id, direction: -1, expectedVersion: p.version }) }, "上移"), /* @__PURE__ */ import_react5.default.createElement("button", { className: "btn small", disabled: busy, onClick: () => void perform("reorder", { taskId: selected.id, direction: 1, expectedVersion: p.version }) }, "下移")) }, /* @__PURE__ */ import_react5.default.createElement("dl", { className: "detail-kv" }, /* @__PURE__ */ import_react5.default.createElement("dt", null, "状态"), /* @__PURE__ */ import_react5.default.createElement("dd", null, /* @__PURE__ */ import_react5.default.createElement("span", { className: "pill" }, STATUS[selected.status], " · v", selected.version)), /* @__PURE__ */ import_react5.default.createElement("dt", null, "执行方式"), /* @__PURE__ */ import_react5.default.createElement("dd", null, executionLabel(p, selected, sessionId)), /* @__PURE__ */ import_react5.default.createElement("dt", null, "执行说明"), /* @__PURE__ */ import_react5.default.createElement("dd", null, selected.executionReason || (selected.mode === "delegate" ? "按需创建真实子会话" : "在负责会话内执行"), selected.mode === "inline" && "；此事项在父会话执行，过程与结果保存到只读事项子会话。"), /* @__PURE__ */ import_react5.default.createElement("dt", null, "所属会话"), /* @__PURE__ */ import_react5.default.createElement("dd", null, /* @__PURE__ */ import_react5.default.createElement("button", { className: "btn small outline", onClick: () => navigate(taskTarget(p, selected)) }, selected.mode === "inline" && selected.recordSession?.created ? "查看事项子会话" : "打开执行会话")), /* @__PURE__ */ import_react5.default.createElement("dt", null, "父级事项"), /* @__PURE__ */ import_react5.default.createElement("dd", null, selected.parentId || "主任务"), /* @__PURE__ */ import_react5.default.createElement("dt", null, "任务要求"), /* @__PURE__ */ import_react5.default.createElement("dd", null, selected.instructions || selected.title), /* @__PURE__ */ import_react5.default.createElement("dt", null, "完成标准"), /* @__PURE__ */ import_react5.default.createElement("dd", null, selected.criteria || "按当前任务要求完成")), selected.report && /* @__PURE__ */ import_react5.default.createElement("div", { className: "notice" }, /* @__PURE__ */ import_react5.default.createElement("strong", null, selected.report.version === selected.version ? "执行结果" : `历史结果 v${selected.report.version}（当前要求已变化）`), /* @__PURE__ */ import_react5.default.createElement("p", null, selected.report.summary)), error && /* @__PURE__ */ import_react5.default.createElement("p", { className: "tf-error", role: "alert" }, error)), detail === "activity" && p && /* @__PURE__ */ import_react5.default.createElement(TaskDialog, { title: "任务动态", subtitle: `持久计划 · v${p.version}`, closeLabel: "关闭任务动态", onClose: () => setDetail(null) }, [...p.events].reverse().map((e) => /* @__PURE__ */ import_react5.default.createElement("article", { className: "history", key: e.id }, /* @__PURE__ */ import_react5.default.createElement("time", null, e.at.replace("T", " ").slice(0, 19), " · ", e.taskId), e.detail))));
 }
 
 // taskflow-source:src/client/components/tool-panel.jsx
-var import_react4 = __toESM(require("react"));
-function ToolPanel({ tool, onClose, renderer }) {
-  const [reload, setReload] = (0, import_react4.useState)(0);
-  if (!tool?.open) return null;
-  return /* @__PURE__ */ import_react4.default.createElement("aside", { className: "tf-tool", "aria-label": `${TOOL_NAMES[tool.kind]}工具视图` }, /* @__PURE__ */ import_react4.default.createElement("header", { className: "tool-header" }, /* @__PURE__ */ import_react4.default.createElement(Icon, { name: tool.kind === "editor" ? "code" : tool.kind }), /* @__PURE__ */ import_react4.default.createElement("span", null, TOOL_NAMES[tool.kind]), /* @__PURE__ */ import_react4.default.createElement("span", { className: "binding" }, tool.taskId || tool.title), /* @__PURE__ */ import_react4.default.createElement("button", { className: "iconbtn", "aria-label": "收起工具视图", onClick: onClose }, /* @__PURE__ */ import_react4.default.createElement(Icon, { name: "close" }))), /* @__PURE__ */ import_react4.default.createElement("div", { className: "tool-context" }, /* @__PURE__ */ import_react4.default.createElement(Icon, { name: "branch" }), "模型调用触发展开 · 仅当前工具"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "tool-content" }, renderer ? renderer(tool) : tool.kind === "browser" && tool.url ? /* @__PURE__ */ import_react4.default.createElement("div", { className: "browser-window" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "browser-toolbar" }, /* @__PURE__ */ import_react4.default.createElement("button", { className: "iconbtn", "aria-label": "刷新网页预览", onClick: () => setReload((r) => r + 1) }, /* @__PURE__ */ import_react4.default.createElement(Icon, { name: "refresh" })), /* @__PURE__ */ import_react4.default.createElement("div", { className: "address" }, /* @__PURE__ */ import_react4.default.createElement(Icon, { name: "lock" }), /* @__PURE__ */ import_react4.default.createElement("input", { readOnly: true, "aria-label": "工具页面地址", value: tool.url })), /* @__PURE__ */ import_react4.default.createElement("a", { className: "iconbtn", href: tool.url, target: "_blank", rel: "noopener noreferrer", "aria-label": "在新标签页打开" }, /* @__PURE__ */ import_react4.default.createElement(Icon, { name: "expand" }))), /* @__PURE__ */ import_react4.default.createElement("iframe", { key: reload, title: "网页预览", src: tool.url, sandbox: "allow-scripts allow-forms", referrerPolicy: "no-referrer" })) : tool.kind === "terminal" ? /* @__PURE__ */ import_react4.default.createElement("pre", { className: "terminal" }, tool.content) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "code-window" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "file-tab" }, tool.title), /* @__PURE__ */ import_react4.default.createElement("pre", null, tool.content))), /* @__PURE__ */ import_react4.default.createElement("footer", { className: "tool-footer" }, "工具视图与当前会话绑定 · 收起后回到完整对话"));
+var import_react7 = __toESM(require("react"));
+var import_react_dom2 = require("react-dom");
+
+// taskflow-source:src/client/components/tool-document.jsx
+var import_react6 = __toESM(require("react"));
+function ToolDocument({ tool, file, sessionId, openers, foreground, custom = false }) {
+  const [loading, setLoading] = (0, import_react6.useState)(false), [error, setError] = (0, import_react6.useState)(""), [hasOpened, setHasOpened] = (0, import_react6.useState)(false);
+  const opened = (0, import_react6.useRef)(/* @__PURE__ */ new Set()), generation = (0, import_react6.useRef)(0), container = (0, import_react6.useRef)(null), preview = (0, import_react6.useRef)(null);
+  const target = file?.path || tool.url;
+  const open = async (automatic = false) => {
+    const current = ++generation.current;
+    setLoading(true);
+    setError("");
+    try {
+      preview.current?.dispose();
+      preview.current = null;
+      const result = await (file ? openers.openDocument(sessionId, file, { container: container.current }) : openers.openBrowser(sessionId, tool.url, { automatic }));
+      if (generation.current === current) {
+        preview.current = typeof result === "object" ? result : null;
+        setHasOpened(true);
+      } else result.dispose?.();
+    } catch (e) {
+      if (generation.current === current) setError(e.message);
+    } finally {
+      if (generation.current === current) setLoading(false);
+    }
+  };
+  (0, import_react6.useEffect)(() => {
+    setLoading(false);
+    setError("");
+    setHasOpened(false);
+    return () => {
+      generation.current++;
+      preview.current?.dispose();
+      preview.current = null;
+      opened.current.clear();
+    };
+  }, [sessionId, target, tool.id, foreground]);
+  (0, import_react6.useEffect)(() => {
+    const key = `${sessionId}:${tool.id}:${target}`;
+    if (!openers || !foreground || custom || !target || tool.phase !== "ready" || tool.autoOpen === false || opened.current.has(key)) return;
+    opened.current.add(key);
+    void open(true);
+  }, [sessionId, tool.id, tool.phase, tool.autoOpen, target, foreground, openers, custom]);
+  return /* @__PURE__ */ import_react6.default.createElement("div", { className: "tf-document-view" }, (error || tool.autoOpen === false && !hasOpened && !loading) && /* @__PURE__ */ import_react6.default.createElement("div", { className: "tf-document-actions" }, error && /* @__PURE__ */ import_react6.default.createElement("p", { role: "alert", className: "tf-error" }, error), /* @__PURE__ */ import_react6.default.createElement("button", { className: "btn small outline", disabled: !openers || !foreground || loading, onClick: () => void open() }, error ? "重试打开" : "打开预览")), loading && /* @__PURE__ */ import_react6.default.createElement("p", { role: "status", className: "tf-preview-loading" }, "正在打开预览…"), file ? /* @__PURE__ */ import_react6.default.createElement("div", { ref: container, className: "tf-document-preview-target", "aria-label": `${file.path} 文档预览` }) : /* @__PURE__ */ import_react6.default.createElement("div", { className: "notice" }, `网页操作由 ${tool.sourceTool || "浏览器工具"} 执行。浏览器视图打开相同地址；登录状态和页面进度由对应浏览器插件管理。`));
 }
 
+// taskflow-source:src/client/components/tool-panel.jsx
+var fit = (n, min, max) => Math.max(min, Math.min(n, Math.max(min, max)));
+var bounds = (p) => {
+  const width = fit(p.width, Math.min(280, window.innerWidth - 16), window.innerWidth - 16);
+  const height = fit(p.height, Math.min(200, window.innerHeight - 16), window.innerHeight - 16);
+  return { ...p, width, height, x: fit(p.x, 8, window.innerWidth - width - 8), y: fit(p.y, 8, window.innerHeight - height - 8) };
+};
+var initial = (sessionId) => {
+  let saved;
+  try {
+    saved = JSON.parse(window.localStorage.getItem(`dsh-taskflow:tool-layout:${sessionId}`));
+  } catch {
+  }
+  const p = { floating: saved?.floating === true, dockWidth: 440, width: 560, height: 440, x: 48, y: 80 };
+  for (const key of ["dockWidth", "width", "height", "x", "y"]) if (Number.isFinite(saved?.[key])) p[key] = saved[key];
+  return bounds(p);
+};
+function ToolPanel({ tool, onClose, renderer, mount, sessionId, openers, foreground = true }) {
+  const [layout, setLayout] = (0, import_react7.useState)(() => initial(sessionId)), [dragging, setDragging] = (0, import_react7.useState)(false);
+  const stopDrag = (0, import_react7.useRef)(() => {
+  }), latest = (0, import_react7.useRef)(layout);
+  latest.current = layout;
+  (0, import_react7.useEffect)(() => {
+    const parent = mount?.parentElement;
+    if (!parent) return;
+    parent.classList.toggle("tf-tool-layout", !layout.floating);
+    mount.classList.toggle("tf-floating-mount", layout.floating);
+    const clamp2 = () => setLayout((old) => ({ ...bounds(old), dockWidth: fit(old.dockWidth, 240, (parent.getBoundingClientRect().width || 1e3) - 320) }));
+    clamp2();
+    window.addEventListener("resize", clamp2);
+    const observer = typeof window.ResizeObserver === "function" ? new window.ResizeObserver(clamp2) : null;
+    observer?.observe(parent);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", clamp2);
+      parent.classList.remove("tf-tool-layout");
+      parent.style.removeProperty("--tf-tool-width");
+      mount.classList.remove("tf-floating-mount");
+    };
+  }, [mount, layout.floating]);
+  (0, import_react7.useEffect)(() => {
+    mount?.parentElement?.style.setProperty("--tf-tool-width", `${layout.dockWidth}px`);
+    try {
+      window.localStorage.setItem(`dsh-taskflow:tool-layout:${sessionId}`, JSON.stringify(layout));
+    } catch {
+    }
+  }, [layout, mount, sessionId]);
+  (0, import_react7.useEffect)(() => () => stopDrag.current(), []);
+  const drag = (event, kind) => {
+    if (event.button !== 0 || kind === "move" && event.target.closest("button,a,input")) return;
+    event.preventDefault();
+    stopDrag.current();
+    const start = { ...latest.current }, x = event.clientX, y = event.clientY, pointerId = event.pointerId;
+    setDragging(true);
+    const move = (e) => {
+      if (e.pointerId !== pointerId) return;
+      const dx = e.clientX - x, dy = e.clientY - y;
+      if (kind === "move") setLayout(bounds({ ...start, x: start.x + dx, y: start.y + dy }));
+      else if (start.floating) setLayout(bounds({ ...start, width: start.width + dx, height: kind === "corner" ? start.height + dy : start.height }));
+      else setLayout({ ...start, dockWidth: fit(start.dockWidth + dx, 240, (mount?.parentElement?.getBoundingClientRect().width || 1e3) - 320) });
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("blur", end);
+      setDragging(false);
+    };
+    stopDrag.current = end;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("blur", end);
+  };
+  const keyboardResize = (e) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    e.preventDefault();
+    const delta = e.key === "ArrowLeft" ? -24 : 24;
+    setLayout((p) => p.floating ? bounds({ ...p, width: e.key === "Home" ? 280 : e.key === "End" ? window.innerWidth - 16 : p.width + delta }) : { ...p, dockWidth: fit(e.key === "Home" ? 240 : e.key === "End" ? Infinity : p.dockWidth + delta, 240, (mount?.parentElement?.getBoundingClientRect().width || 1e3) - 320) });
+  };
+  if (!tool?.open) return null;
+  const content = /* @__PURE__ */ import_react7.default.createElement("aside", { className: `tf-tool ${layout.floating ? "tf-tool-floating" : "tf-tool-docked"} ${dragging ? "tf-tool-dragging" : ""}`, style: layout.floating ? { left: layout.x, top: layout.y, width: layout.width, height: layout.height } : void 0, "aria-label": `${TOOL_NAMES[tool.kind]}工具视图` }, /* @__PURE__ */ import_react7.default.createElement("header", { className: "tool-header", onPointerDown: (e) => layout.floating && drag(e, "move") }, /* @__PURE__ */ import_react7.default.createElement(Icon, { name: tool.kind === "editor" ? "code" : tool.kind }), /* @__PURE__ */ import_react7.default.createElement("span", null, TOOL_NAMES[tool.kind]), /* @__PURE__ */ import_react7.default.createElement("span", { className: "binding" }, tool.taskId), /* @__PURE__ */ import_react7.default.createElement("button", { className: "iconbtn", "aria-label": layout.floating ? "停靠工具视图" : "悬浮工具视图", title: layout.floating ? "停靠到对话左侧" : "悬浮并拖动位置", onClick: () => {
+    stopDrag.current();
+    setLayout((p) => ({ ...bounds(p), floating: !p.floating }));
+  } }, /* @__PURE__ */ import_react7.default.createElement(Icon, { name: layout.floating ? "panel" : "expand" })), /* @__PURE__ */ import_react7.default.createElement("button", { className: "iconbtn", "aria-label": "收起工具视图", onClick: onClose }, /* @__PURE__ */ import_react7.default.createElement(Icon, { name: "close" }))), /* @__PURE__ */ import_react7.default.createElement("div", { className: `tool-content${tool.files?.length ? " tf-tool-documents" : ""}` }, tool.files?.length && tool.phase !== "running" && tool.phase !== "failed" ? tool.files.map((file) => /* @__PURE__ */ import_react7.default.createElement(ToolDocument, { key: file.path, tool, file, sessionId, openers, foreground })) : (() => {
+    const rendered = renderer?.(tool);
+    return /* @__PURE__ */ import_react7.default.createElement(import_react7.default.Fragment, null, tool.kind === "browser" && tool.url && tool.phase !== "running" && tool.phase !== "failed" && /* @__PURE__ */ import_react7.default.createElement(ToolDocument, { tool, sessionId, openers, foreground, custom: !!rendered }), rendered || (tool.kind !== "browser" || !tool.url || tool.phase === "running" || tool.phase === "failed" ? tool.kind === "terminal" ? /* @__PURE__ */ import_react7.default.createElement("pre", { className: "terminal" }, tool.content) : /* @__PURE__ */ import_react7.default.createElement("div", { className: "code-window" }, /* @__PURE__ */ import_react7.default.createElement("div", { className: "file-tab" }, tool.title), /* @__PURE__ */ import_react7.default.createElement("pre", null, tool.content)) : null));
+  })()), /* @__PURE__ */ import_react7.default.createElement("div", { className: "tf-tool-resizer", role: "separator", tabIndex: 0, "aria-label": "调整工具视图宽度", "aria-orientation": "vertical", "aria-valuemin": 240, "aria-valuemax": layout.floating ? window.innerWidth - 16 : Math.max(240, (mount?.parentElement?.getBoundingClientRect().width || 1e3) - 320), "aria-valuenow": Math.round(layout.floating ? layout.width : layout.dockWidth), onKeyDown: keyboardResize, onPointerDown: (e) => drag(e, "resize") }), layout.floating && /* @__PURE__ */ import_react7.default.createElement("div", { className: "tf-tool-corner", "aria-hidden": "true", onPointerDown: (e) => drag(e, "corner") }), dragging && /* @__PURE__ */ import_react7.default.createElement("div", { className: "tf-tool-drag-shield" }));
+  return layout.floating ? (0, import_react_dom2.createPortal)(content, document.body) : content;
+}
+
+// taskflow-source:src/client/components/session-tree.jsx
+var import_react9 = __toESM(require("react"));
+var import_react_dom3 = require("react-dom");
+
 // taskflow-source:src/client/hooks/use-taskflow.mjs
-var import_react5 = require("react");
-function useTaskflow(api, sessionId) {
-  const [state, setState] = (0, import_react5.useState)({ plan: null, loading: true });
-  const latest = (0, import_react5.useRef)(0);
-  (0, import_react5.useEffect)(() => {
+var import_react8 = require("react");
+function useTaskflow(api, sessionId, interval = 1200) {
+  const [state, setState] = (0, import_react8.useState)({ plan: null, loading: true });
+  const latest = (0, import_react8.useRef)(0);
+  (0, import_react8.useEffect)(() => {
     let alive = true;
     const generation = ++latest.current;
     setState({ plan: null, loading: true });
@@ -190,33 +395,520 @@ function useTaskflow(api, sessionId) {
       }
     };
     void load();
-    const timer = setInterval(load, 1200);
+    const timer = setInterval(load, interval);
     return () => {
       alive = false;
       clearInterval(timer);
     };
-  }, [api, sessionId]);
+  }, [api, sessionId, interval]);
   return state;
 }
 
+// taskflow-source:src/client/components/session-tree.jsx
+function SessionTree({ api, sessionId, currentSessionId, navigate }) {
+  const view = useTaskflow(api, sessionId), anchor = (0, import_react9.useRef)(null), [mount, setMount] = (0, import_react9.useState)(null), [opened, setOpened] = (0, import_react9.useState)(/* @__PURE__ */ new Set()), [expanded, setExpanded] = (0, import_react9.useState)(false), groupId = (0, import_react9.useId)();
+  const nodes = sessionTree(view.plan);
+  const isRoot = view.plan?.rootSessionId === sessionId && nodes.length > 0;
+  (0, import_react9.useEffect)(() => {
+    if (!isRoot) return;
+    const node = document.createElement("div");
+    node.className = "tf-session-tree-mount";
+    node.dataset.taskflowParentSession = sessionId;
+    const control = document.createElement("span");
+    control.className = "tf-session-toggle-mount";
+    const status = document.createElement("span");
+    status.className = "tf-session-root-status";
+    setMount({ tree: node, control, status });
+    let attachedRow;
+    const clickRow = (event) => {
+      if (!event.defaultPrevented && !event.target.closest('button, a, input, [role="menuitem"]')) setExpanded((value) => !value);
+    };
+    const keyRow = (event) => {
+      if (event.target === attachedRow && ["Enter", " "].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) setExpanded((value) => !value);
+    };
+    const detachRow = () => {
+      attachedRow?.removeEventListener("click", clickRow);
+      attachedRow?.removeEventListener("keydown", keyRow);
+      attachedRow?.classList.remove("tf-session-root");
+      attachedRow?.querySelectorAll(".tf-session-native-leading,.tf-session-native-trailing,.tf-session-native-title").forEach((e) => e.classList.remove("tf-session-native-leading", "tf-session-native-trailing", "tf-session-native-title"));
+      attachedRow = null;
+    };
+    const attach = () => {
+      const row = anchor.current?.closest("[data-row-key]");
+      if (!row?.isConnected || row.dataset.rowKey !== `session:${sessionId}`) {
+        node.remove();
+        control.remove();
+        status.remove();
+        detachRow();
+        return;
+      }
+      if (attachedRow !== row) {
+        detachRow();
+        attachedRow = row;
+        row.classList.add("tf-session-root");
+        const trailing = [...row.children].find((e) => e.contains(anchor.current));
+        trailing?.classList.add("tf-session-native-trailing");
+        if (row.firstElementChild !== trailing) row.firstElementChild?.classList.add("tf-session-native-leading");
+        if (row.children[1] !== trailing) row.children[1]?.classList.add("tf-session-native-title");
+        row.addEventListener("click", clickRow);
+        row.addEventListener("keydown", keyRow);
+      }
+      if (row.nextElementSibling !== node) row.after(node);
+      if (row.firstElementChild !== control) row.prepend(control);
+      if (row.lastElementChild !== status) row.append(status);
+    };
+    const observer = new MutationObserver(attach);
+    observer.observe(document.body, { childList: true, subtree: true });
+    attach();
+    return () => {
+      observer.disconnect();
+      detachRow();
+      node.remove();
+      control.remove();
+      status.remove();
+      setMount(null);
+    };
+  }, [sessionId, isRoot]);
+  const toggle = (id) => setOpened((old) => {
+    const next = new Set(old);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const count = (tasks) => tasks.reduce((n, t) => n + 1 + count(t.children), 0);
+  const render = (tasks) => tasks.map((t) => /* @__PURE__ */ import_react9.default.createElement("div", { key: t.executionSessionId, className: "tf-session-node", "data-taskflow-session": t.executionSessionId }, /* @__PURE__ */ import_react9.default.createElement("div", { className: `session-row tf-session-line ${currentSessionId === t.executionSessionId ? "selected" : ""}`, onClick: () => {
+    navigate(t.target);
+    if (t.children.length) toggle(t.executionSessionId);
+  } }, t.children.length ? /* @__PURE__ */ import_react9.default.createElement("button", { className: "tf-session-arrow", "aria-label": `${opened.has(t.executionSessionId) ? "折叠" : "展开"}子会话 ${t.id}`, "aria-expanded": opened.has(t.executionSessionId), onClick: (event) => {
+    event.stopPropagation();
+    toggle(t.executionSessionId);
+  } }, /* @__PURE__ */ import_react9.default.createElement(Icon, { name: "chevron", style: { transform: opened.has(t.executionSessionId) ? "rotate(90deg)" : void 0 } })) : t.status === "running" ? /* @__PURE__ */ import_react9.default.createElement(TaskSpinner, { label: `${t.id} 进行中` }) : /* @__PURE__ */ import_react9.default.createElement(Icon, { name: "chat", "data-icon": "chat" }), /* @__PURE__ */ import_react9.default.createElement("button", { className: "tf-session-link", title: `${t.id} · ${STATUS[t.status]} · ${t.title}`, "aria-current": currentSessionId === t.executionSessionId ? "page" : void 0, "aria-expanded": t.children.length ? opened.has(t.executionSessionId) : void 0 }, t.children.length > 0 && t.status === "running" && /* @__PURE__ */ import_react9.default.createElement(TaskSpinner, { label: `${t.id} 进行中` }), /* @__PURE__ */ import_react9.default.createElement("span", { className: "title" }, t.id, " ", t.title), /* @__PURE__ */ import_react9.default.createElement("span", { className: `dot ${t.status}`, role: "img", "aria-label": STATUS[t.status] }))), opened.has(t.executionSessionId) && t.children.length > 0 && /* @__PURE__ */ import_react9.default.createElement("div", { className: "session-children", role: "group" }, render(t.children))));
+  const label = `“${view.plan?.title}”的 ${count(nodes)} 个子会话`;
+  const rootStatus = Object.values(view.plan?.tasks ?? {}).some((t) => t.status === "running") ? "running" : Object.values(view.plan?.tasks ?? {}).every((t) => ["completed", "cancelled"].includes(t.status)) ? "completed" : "pending";
+  return /* @__PURE__ */ import_react9.default.createElement(import_react9.default.Fragment, null, /* @__PURE__ */ import_react9.default.createElement("span", { ref: anchor, className: "tf-session-tree-anchor" }), mount && /* @__PURE__ */ import_react9.default.createElement(import_react9.default.Fragment, null, (0, import_react_dom3.createPortal)(/* @__PURE__ */ import_react9.default.createElement("span", { onClick: (e) => e.stopPropagation(), onKeyDown: (e) => e.stopPropagation() }, /* @__PURE__ */ import_react9.default.createElement("button", { type: "button", className: "tf-session-toggle", title: label, "aria-label": `${expanded ? "折叠" : "展开"}${label}`, "aria-expanded": expanded, "aria-controls": groupId, onClick: () => setExpanded((value) => !value) }, /* @__PURE__ */ import_react9.default.createElement(Icon, { name: "chevron", style: { transform: expanded ? "rotate(90deg)" : void 0 } }))), mount.control), (0, import_react_dom3.createPortal)(/* @__PURE__ */ import_react9.default.createElement("span", { className: `dot ${rootStatus}`, role: "img", "aria-label": STATUS[rootStatus] }), mount.status), (0, import_react_dom3.createPortal)(/* @__PURE__ */ import_react9.default.createElement("nav", { id: groupId, className: "tf-session-tree", "aria-label": label, hidden: !expanded, onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ import_react9.default.createElement("div", { className: "session-children" }, render(nodes))), mount.tree)));
+}
+
+// taskflow-source:src/client/components/quick-replies.jsx
+var import_react10 = __toESM(require("react"));
+function QuickReplies({ api, sessionId, foreground = true, input, inputActions, focus }) {
+  const [view, setView] = (0, import_react10.useState)({ phase: "idle", items: [] }), [error, setError] = (0, import_react10.useState)("");
+  const request = (0, import_react10.useRef)(() => {
+  });
+  (0, import_react10.useEffect)(() => {
+    let alive = true, busy = false;
+    setView({ phase: foreground ? "loading" : "idle", items: [] });
+    setError("");
+    if (!foreground) return;
+    const load = async (refresh = false) => {
+      if (busy) return;
+      busy = true;
+      if (refresh) {
+        setView((previous) => ({ ...previous, phase: "loading" }));
+        setError("");
+      }
+      try {
+        const next = await api.action(sessionId, "quick-replies", { refresh });
+        if (alive) {
+          setView(next);
+          setError("");
+        }
+      } catch (e) {
+        if (alive) {
+          setView((previous) => ({ ...previous, phase: "unavailable" }));
+          setError(e.message === "不支持的操作" ? "当前后端尚未加载推荐功能，请重启 DSH。" : "推荐服务连接失败，请稍后重试；若刚更新插件，请重启 DSH。");
+        }
+      } finally {
+        busy = false;
+      }
+    };
+    request.current = load;
+    void load();
+    const timer = setInterval(load, 1200);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      request.current = () => {
+      };
+    };
+  }, [api, sessionId, foreground]);
+  const fill = (item) => {
+    try {
+      const draft = input?.draft ?? "";
+      if (input?.phase && input.phase !== "plain") throw new Error("请先完成当前输入操作，再选择推荐回复。");
+      if (inputActions?.insertText && Number.isInteger(input?.draftRev)) {
+        if (!inputActions.insertText(`${draft ? "\n" : ""}${item.text}`, { start: draft.length, end: draft.length, draftRev: input.draftRev })) throw new Error("草稿已变化，请重试。");
+      } else if (!draft && inputActions?.setDraft) inputActions.setDraft(item.text);
+      else throw new Error("请先保留现有草稿，再选择推荐回复。");
+      focus?.();
+      setError("");
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  if (!foreground || view.phase === "idle" && !error) return null;
+  return /* @__PURE__ */ import_react10.default.createElement("div", { className: "tf-quick-replies-wrap" }, /* @__PURE__ */ import_react10.default.createElement("nav", { className: "tf-quick-replies", "aria-label": "模型推荐回复" }, view.items?.map((item) => /* @__PURE__ */ import_react10.default.createElement("button", { type: "button", key: item.label, title: item.text, onClick: () => fill(item) }, item.label))), ["loading", "generating", "busy"].includes(view.phase) && /* @__PURE__ */ import_react10.default.createElement("span", { className: "tf-reply-status tf-reply-loading", role: "status", title: view.phase === "busy" ? "等待当前回复完成后生成推荐" : void 0 }, /* @__PURE__ */ import_react10.default.createElement("span", { "aria-hidden": "true" }, /* @__PURE__ */ import_react10.default.createElement(TaskSpinner, null)), /* @__PURE__ */ import_react10.default.createElement("span", null, "正在推荐中...")), (error || view.phase === "unavailable") && /* @__PURE__ */ import_react10.default.createElement("span", { className: "tf-reply-status", role: "status" }, error || view.message, /* @__PURE__ */ import_react10.default.createElement("button", { type: "button", onClick: () => void request.current(true) }, "重试")));
+}
+
 // taskflow-source:src/client/styles.css
-var styles_default = "/* Host-only adaptations. Component declarations are synced from the PRD. */\n.tf-panel,.tf-tool,.tf-dialog{--ink:var(--dsw-alias-label-primary,#262626);--secondary:var(--dsw-alias-label-secondary,#666);--muted:var(--dsw-alias-label-tertiary,#999);--line:var(--dsw-alias-border-l2,#eee);--surface:var(--dsw-alias-bg-base,#fff);--hover:var(--dsw-alias-interactive-bg-hover,#f5f5f5);--blue:var(--dsw-alias-state-business-primary,#4d6bfe);--hairline:1px;box-sizing:border-box;color:var(--ink);font:14px var(--dsw-font-family,system-ui,sans-serif);-webkit-font-smoothing:antialiased}\n.tf-panel *,.tf-tool *,.tf-dialog *{box-sizing:border-box}:where(.tf-panel,.tf-tool,.tf-dialog) button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none}:where(.tf-panel,.tf-tool,.tf-dialog) button:hover{background:var(--hover)}.tf-panel button:disabled,.tf-dialog button:disabled{opacity:.4;cursor:default}.tf-panel button:focus-visible,.tf-tool button:focus-visible,.tf-dialog button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.tf-panel svg,.tf-tool svg,.tf-dialog svg,.tf-entry svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;vertical-align:middle;flex-shrink:0}\n.tf-panel.tf-panel{height:100%;border:0;overflow:hidden}.tf-panel .tf-task{text-align:left;padding:0;display:block;width:100%;overflow-wrap:anywhere;border-radius:0}.tf-panel .tf-task:hover{background:none}.tf-fold{padding:0;display:inline-grid;place-items:center}.tf-panel .tf-fold svg{width:11px;height:11px}.tf-error{font-size:12px;color:#d33;overflow-wrap:anywhere;padding:8px 16px}.tf-dialog dd{white-space:pre-wrap}.tf-tool.tf-tool{height:100%;width:100%;max-width:none;min-width:0}.tf-tool iframe{display:block;border:0;width:100%;height:430px;background:white}.tf-tool .tool-header>span:first-of-type{white-space:nowrap}.tf-tool .tool-header .iconbtn{margin-left:0}\n.tf-tool-layout{display:grid!important;grid-template-columns:clamp(300px,48%,650px) minmax(0,1fr)!important;grid-template-rows:auto minmax(0,1fr)!important}.tf-tool-layout>[data-conversation-content]{grid-column:2;grid-row:2;min-width:0}.tf-tool-layout>:not([data-conversation-content]):not(.tf-tool-mount){grid-column:1/-1}.tf-tool-mount{grid-column:1;grid-row:2;min-height:0;min-width:0}.tf-tool-layout.tf-tool-body{grid-template-rows:minmax(0,1fr)!important}.tf-tool-body>[data-conversation-content],.tf-tool-body>.tf-tool-mount{grid-row:1!important}.tf-entry{font:inherit;background:none;border:0;border-radius:8px;padding:5px 8px;color:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:4px}.tf-entry svg{width:14px;height:14px}.tf-mobile-view{display:none}\n@media(max-width:1250px){.tf-tool-layout{grid-template-columns:minmax(245px,50%) minmax(0,1fr)!important}.tf-tool-layout .messages{padding:23px 16px}.tf-tool-layout .composer{padding:12px 14px 7px}.tf-tool-layout .suggestions{display:none}.tf-tool-layout .composer-controls .model{display:none}}\n@media(max-width:1080px){.tf-tool-layout{grid-template-columns:minmax(0,1fr)!important}.tf-tool-layout>.tf-tool-mount{grid-row:2;grid-column:1;display:none}.tf-tool-layout>[data-conversation-content]{grid-row:2;grid-column:1}.tf-tool-layout.tf-tool-show-tool>.tf-tool-mount{display:block}.tf-tool-layout.tf-tool-show-tool>[data-conversation-content]{display:none}.tf-mobile-view{display:flex;gap:2px}.tf-mobile-view button{font:inherit;font-size:11px;border:0;padding:4px 6px;border-radius:6px;background:transparent;color:inherit;white-space:nowrap;cursor:pointer}.tf-mobile-view button[aria-pressed=true]{background:var(--dsw-alias-interactive-bg-hover,#f4f5f7)}}\n\n\n@media(max-width:790px){.tf-tool-layout .tf-tool .tool-content{padding:18px 14px}}\n";
+var styles_default = `/* Host-only adaptations. Component declarations are synced from the PRD. */
+.tf-panel,.tf-tool,.tf-dialog,.tf-session-root,.tf-session-tree,.tf-quick-replies-wrap{--ink:var(--dsw-alias-label-primary,#262626);--secondary:var(--dsw-alias-label-secondary,#666);--muted:var(--dsw-alias-label-tertiary,#999);--line:var(--dsw-alias-border-l2,#eee);--surface:var(--dsw-alias-bg-base,#fff);--hover:var(--dsw-alias-interactive-bg-hover,#f5f5f5);--blue:var(--dsw-alias-state-business-primary,#4d6bfe);--hairline:1px;box-sizing:border-box;color:var(--ink);font:14px var(--dsw-font-family,system-ui,sans-serif);-webkit-font-smoothing:antialiased}
+.tf-panel *,.tf-tool *,.tf-dialog *{box-sizing:border-box}:where(.tf-panel,.tf-tool,.tf-dialog) button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none}:where(.tf-panel,.tf-tool,.tf-dialog) button:hover{background:var(--hover)}.tf-panel button:disabled,.tf-dialog button:disabled{opacity:.4;cursor:default}.tf-panel button:focus-visible,.tf-tool button:focus-visible,.tf-dialog button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.tf-panel svg,.tf-tool svg,.tf-dialog svg,.tf-entry svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;vertical-align:middle;flex-shrink:0}
+.tf-panel.tf-panel{height:100%;border:0;overflow:hidden}.tf-panel .tf-task{text-align:left;padding:0;display:block;width:100%;overflow-wrap:anywhere;border-radius:0}.tf-panel .tf-task:hover{background:none}.tf-fold{padding:0;display:inline-grid;place-items:center}.tf-panel .tf-fold svg{width:11px;height:11px}.tf-error{font-size:12px;color:#d33;overflow-wrap:anywhere;padding:8px 16px}.tf-dialog dd{white-space:pre-wrap}.tf-tool.tf-tool{height:100%;width:100%;max-width:none;min-width:0}.tf-tool iframe{display:block;border:0;width:100%;height:430px;background:white}.tf-tool .tool-header>span:first-of-type{white-space:nowrap}.tf-tool .tool-header .iconbtn{margin-left:0}
+.tf-tool-layout{display:grid!important;grid-template-columns:minmax(240px,var(--tf-tool-width,440px)) minmax(320px,1fr)!important;grid-template-rows:auto minmax(0,1fr)!important}.tf-tool-layout>[data-conversation-content]{grid-column:2;grid-row:2;min-width:0}.tf-tool-layout>:not([data-conversation-content]):not(.tf-tool-mount){grid-column:1/-1}.tf-tool-mount{grid-column:1;grid-row:2;min-height:0;min-width:0}.tf-tool-layout.tf-tool-body{grid-template-rows:minmax(0,1fr)!important}.tf-tool-body>[data-conversation-content],.tf-tool-body>.tf-tool-mount{grid-row:1!important}.tf-entry-anchor:empty{display:none}.tf-header-entry-mount{display:inline-flex;align-items:center}.tf-entry{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:32px;height:30px;padding:0 8px;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;-webkit-app-region:no-drag}.tf-entry svg{width:17px;height:17px}.tf-entry:hover{background:rgba(77,107,254,.09)}.tf-entry:focus-visible{outline:2px solid #4d6bfe;outline-offset:2px}.tf-mobile-view{display:none}
+@media(max-width:1250px){.tf-tool-layout{grid-template-columns:minmax(240px,var(--tf-tool-width,440px)) minmax(320px,1fr)!important}.tf-tool-layout .messages{padding:23px 16px}.tf-tool-layout .composer{padding:12px 14px 7px}.tf-tool-layout .suggestions{display:none}.tf-tool-layout .composer-controls .model{display:none}}
+@media(max-width:1080px){.tf-tool-layout{grid-template-columns:minmax(0,1fr)!important}.tf-tool-layout>.tf-tool-mount{grid-row:2;grid-column:1;display:none}.tf-tool-layout>[data-conversation-content]{grid-row:2;grid-column:1}.tf-tool-layout.tf-tool-show-tool>.tf-tool-mount{display:block}.tf-tool-layout.tf-tool-show-tool>[data-conversation-content]{display:none}.tf-mobile-view{display:flex;gap:2px}.tf-mobile-view button{font:inherit;font-size:11px;border:0;padding:4px 6px;border-radius:6px;background:transparent;color:inherit;white-space:nowrap;cursor:pointer}.tf-mobile-view button[aria-pressed=true]{background:var(--dsw-alias-interactive-bg-hover,#f4f5f7)}}
+
+
+@media(max-width:790px){.tf-tool-layout .tf-tool .tool-content{padding:18px 14px}}
+
+@media(prefers-color-scheme:dark){.tf-entry:hover{background:rgba(125,149,255,.14)}.tf-entry:focus-visible{outline-color:#7d95ff}}
+@media(max-width:480px){.tf-entry>span{display:none}}
+
+.tf-planning{font-size:12px;color:var(--secondary);padding:8px 16px;overflow-wrap:anywhere}
+
+/* Tool surface layout is user controlled; no host nodes are moved. */
+.tf-tool-mount{position:relative}.tf-floating-mount{display:none!important}
+.tf-tool.tf-tool-docked{position:relative;overflow:visible}
+.tf-tool.tf-tool-floating{position:fixed;z-index:1200;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 48px #0003;overflow:visible;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);background:var(--surface)}
+.tf-tool-floating>.tool-header{cursor:move;touch-action:none;border-radius:12px 12px 0 0}
+.tf-tool-floating>.tool-footer{border-radius:0 0 12px 12px;background:var(--surface)}
+.tf-tool .tf-tool-resizer{position:absolute;right:-4px;top:0;bottom:0;width:8px;cursor:col-resize;touch-action:none;z-index:3;border-radius:4px}
+.tf-tool-resizer:hover,.tf-tool-resizer:focus-visible{background:var(--blue);outline:0;opacity:.6}
+.tf-tool-corner{position:absolute;bottom:0;right:0;width:16px;height:16px;cursor:nwse-resize;touch-action:none;z-index:4;background:linear-gradient(135deg,transparent 60%,var(--muted) 61%,transparent 68%,var(--muted) 69%,transparent 77%);border-radius:0 0 8px}
+.tf-tool-drag-shield{position:absolute;inset:38px 4px 0 0;z-index:2;cursor:inherit}.tf-tool-dragging{user-select:none}
+.tf-tool-layout.tf-tool-show-tool:has(>.tf-floating-mount)>[data-conversation-content]{display:revert}
+.tf-blocked-reason{margin:6px 0 0 26px;font-size:11px;line-height:1.6;color:var(--secondary);white-space:pre-wrap;overflow-wrap:anywhere;max-height:7em;overflow:auto}
+.tf-feedback{font-size:12px;padding:8px 16px;color:var(--blue);overflow-wrap:anywhere}
+.tf-session-tree-anchor:empty{display:none}.tf-session-tree-mount{width:100%;min-width:0;flex-shrink:0}
+.tf-session-tree{padding:0 4px 0 calc(var(--dsh-workspace-indent,0px));min-width:0}.tf-session-tree[hidden]{display:none}
+.tf-session-root.tf-session-root{border:0;box-sizing:border-box;cursor:pointer;padding-left:calc(9px + var(--dsh-workspace-indent,0px));line-height:20px}
+.tf-session-root[aria-selected=true]{background:var(--hover)}
+.tf-session-native-leading,.tf-session-native-trailing{display:none!important}.tf-session-native-title{font:inherit!important;flex:1}
+.tf-session-root-status{display:inline-flex;align-items:center;flex:none}.tf-session-root-status .dot{width:5px;height:5px}
+.tf-session-toggle-mount{display:inline-flex;align-items:center;flex:none}.tf-session-toggle{display:inline-grid;place-items:center;border:0;background:none;color:var(--muted);cursor:pointer;padding:0;width:16px;height:20px}
+.tf-session-toggle svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.tf-session-toggle:focus-visible{outline:2px solid var(--blue)}
+.tf-session-path{display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:11px;color:var(--secondary);margin-bottom:8px}
+.tf-session-path button{font:inherit;color:var(--blue);border:0;background:none;cursor:pointer;padding:2px}.tf-session-path [aria-current]{overflow-wrap:anywhere}
+.tf-session-line{box-sizing:border-box;color:var(--ink);cursor:pointer}.tf-session-line:hover{background:var(--hover)}
+.tf-session-tree button{border:0;background:none;color:inherit;font:inherit;cursor:pointer;text-align:left;min-width:0}
+.tf-session-tree button:focus-visible{outline:2px solid var(--blue);border-radius:4px}
+.tf-session-line svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.tf-session-arrow{display:grid;place-items:center;width:16px;flex:none;padding:0}.tf-session-link{display:flex;align-items:center;gap:6px;flex:1;padding:0;height:100%;overflow:hidden}.tf-session-link>span.title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.tf-session-link .dot{width:5px;height:5px}
+@media(max-width:1080px){.tf-tool-docked>.tf-tool-resizer{display:none}}
+
+.tf-panel .task-box.running{border:0;background:none;box-shadow:none}.tf-task-spinner{animation:tf-task-spin .85s linear infinite;flex:none;fill:none;stroke:currentColor;stroke-width:2;color:var(--blue,#4d6bfe)}.tf-panel .task-box .tf-task-spinner{width:17px;height:17px}.tf-session-link .tf-task-spinner{width:13px;height:13px;opacity:1}
+@keyframes tf-task-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.tf-task-spinner{animation:none}}
+.tf-document-view{min-width:0}.tf-document-source{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.7 ui-monospace,monospace}.tf-markdown-preview{font-size:14px;line-height:1.8;overflow-wrap:anywhere}.tf-markdown-preview h1{font-size:24px}.tf-markdown-preview h2{font-size:20px}.tf-markdown-preview h3{font-size:17px}.tf-markdown-preview h1,.tf-markdown-preview h2,.tf-markdown-preview h3{line-height:1.4;margin:1em 0 .5em}.tf-markdown-preview pre{white-space:pre;overflow:auto;padding:12px;background:var(--hover);border:1px solid var(--line);border-radius:8px;font:12px/1.7 ui-monospace,monospace}.tf-markdown-preview :not(pre)>code{padding:2px 4px;background:var(--hover);border-radius:4px;font-size:12px}.tf-markdown-preview blockquote{margin:12px 0;padding:0 12px;border-left:3px solid var(--line);color:var(--secondary)}.tf-markdown-preview a{color:var(--blue)}.tf-markdown-table{max-width:100%;overflow:auto}.tf-markdown-table table{width:100%;border-collapse:collapse;font-size:12px}.tf-markdown-table td,.tf-markdown-table th{padding:6px 8px;border:1px solid var(--line);text-align:left}.tf-markdown-preview input[type=checkbox]{pointer-events:none}.tf-markdown-image{font-size:12px;color:var(--secondary)}
+
+.tf-quick-replies-wrap{min-width:0;font:inherit}.tf-quick-replies:empty{display:none}.tf-quick-replies button{font-family:inherit;background:transparent;cursor:pointer;line-height:1.4}.tf-quick-replies button:hover{background:var(--hover);color:var(--ink)}.tf-quick-replies button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.tf-reply-status{display:block;font-size:11px;color:var(--secondary);margin-bottom:8px}.tf-reply-status button{border:0;background:none;color:var(--blue);font:inherit;cursor:pointer;margin-left:6px}
+.tf-checklist-root{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;height:100%}
+/* Keep the compact width local to the selected normal checklist. Fullscreen,
+   floating tabs, other plugins and the host's saved width remain untouched. */
+:has(>[data-rightbar-col] [data-tf-compact-checklist]):not([data-rightbar-collapsed]):not([data-rightbar-fullscreen]){grid-template-columns:var(--tf-sidebar-track) minmax(400px,1fr) var(--tf-checklist-width,300px)!important}
+[data-tf-compact-checklist][data-sidebar-right-panel="push"]{width:var(--tf-checklist-width,300px)!important;--dsh-sidebar-width:var(--tf-checklist-width,300px)!important}
+:has(>[data-rightbar-col] [data-tf-compact-checklist])>[data-side="rightbar"]{display:none}
+.tf-checklist-resizer{position:absolute;left:0;top:0;bottom:0;width:6px;z-index:30;pointer-events:auto;cursor:col-resize;touch-action:none}
+.tf-checklist-resizer:hover,.tf-checklist-resizer:focus-visible{background:var(--dsw-alias-state-business-primary,#4d6bfe);opacity:.5;outline:0}
+.tf-checklist-resize-shield{position:fixed;inset:0;z-index:1205;pointer-events:auto;cursor:col-resize;user-select:none;touch-action:none}
+.tf-quick-replies-wrap{width:100%;max-width:780px;margin:0 auto;text-align:left}
+.tf-reply-loading{display:flex;align-items:center;justify-content:flex-start;gap:5px;line-height:18px}
+.tf-reply-loading>span:first-child{display:inline-flex;align-items:center}
+.tf-reply-loading .tf-task-spinner{width:12px;height:12px;stroke-width:2}
+.tf-tool .tool-content.tf-tool-documents{display:flex;flex-direction:column;gap:8px;padding:4px;overscroll-behavior:contain}
+.tf-tool-documents>.tf-document-view{position:relative;display:flex;flex-direction:column;flex:0 0 max(300px,100%);min-height:0;min-width:0}
+.tf-tool-documents>.tf-document-view:only-child{flex:1;overflow:hidden}
+.tf-document-actions{display:flex;align-items:center;gap:8px;padding:8px;flex-shrink:0}.tf-document-actions .tf-error{margin:0;padding:0;flex:1}.tf-preview-loading{position:absolute;inset:8px auto auto 8px;margin:0;font-size:12px;z-index:1;color:var(--secondary)}
+.tf-document-preview-target{flex:1;min-height:0;min-width:0;border:0;border-radius:4px;overflow:hidden}
+.tf-host-preview.tf-host-preview{position:fixed!important;border:0!important;border-radius:8px!important;box-shadow:none!important;overflow:hidden!important}
+.tf-host-preview [data-dockkit-float-grip],.tf-host-preview>[data-dockkit-float-resize]{display:none!important}
+.tf-host-preview [data-textpreview-path]{display:none!important}
+`;
 
 // taskflow-source:src/client/generated/prototype.css
-var prototype_default = '/* Generated from docs/prototype/dsh-taskflow-prd.html.\n * Original DeepSeek UI styles: MIT; see licenses/DeepSeek-MIT.txt.\n * Run npm run build to resync. */\n:where(.tf-panel,.tf-tool,.tf-dialog) .iconbtn{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:8px;color:var(--secondary);padding:0;flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .iconbtn svg{width:16px;height:16px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:36px;border:0;border-radius:12px;padding:0 14px;background:transparent;color:var(--ink);font-size:14px;line-height:22px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.small{min-height:28px;height:auto;padding:4px 10px;border-radius:8px;font-size:12px;line-height:18px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.outline{box-shadow:inset 0 0 0 var(--hairline) var(--dsw-alias-border-l3)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.primary{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.primary:hover{background:var(--dsw-alias-button-primary-hover)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.blue{color:var(--blue);background:var(--dsw-specific-bubble)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.danger{color:var(--dsw-alias-state-danger-primary,#ec1313)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn svg{width:16px;height:16px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .subtle{color:var(--muted)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .pill{display:inline-flex;align-items:center;gap:5px;background:var(--hover);color:var(--secondary);font-size:11px;line-height:18px;padding:2px 7px;border-radius:6px;white-space:nowrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .pill.blue{color:var(--blue);background:var(--dsw-specific-bubble)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .pill.success{color:var(--dsw-alias-state-success-primary,#168349);background:var(--dsw-static-green-500-a08)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);display:inline-block;flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dot.running{background:var(--blue)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dot.completed{background:var(--dsw-static-green-500)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dot.awaiting_children{background:var(--dsw-static-amber-500)}\n.tf-tool{display:flex;flex-direction:column;flex:0 0 48%;max-width:650px;min-width:300px;min-height:0;border-right:1px solid var(--dsw-alias-border-l3);background:var(--surface);order:-1}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-header{height:38px;flex-shrink:0;display:flex;align-items:center;gap:7px;padding:0 10px;font-size:12px;border-bottom:1px solid var(--line)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-header svg{width:15px;height:15px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-header .binding{font-size:11px;color:var(--muted);margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-context{height:38px;flex-shrink:0;display:flex;align-items:center;gap:6px;padding:0 12px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--line)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-content{flex:1;min-height:0;overflow:auto;padding:20px 16px;background:var(--dsw-specific-sidebar-fill);scrollbar-width:thin}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-footer{padding:8px 12px;font-size:10px;color:var(--muted);border-top:1px solid var(--line);line-height:1.7}\n:where(.tf-panel,.tf-tool,.tf-dialog) .browser-window{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .browser-toolbar{height:42px;display:flex;align-items:center;gap:5px;border-bottom:1px solid var(--line);padding:0 8px;background:var(--dsw-specific-sidebar-fill)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .browser-toolbar .iconbtn{width:22px;height:25px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .browser-toolbar .iconbtn svg{width:13px;height:13px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .address{border:1px solid var(--line);border-radius:8px;background:var(--surface);height:26px;display:flex;align-items:center;gap:5px;flex:1;min-width:0;padding:0 8px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .address svg{width:11px;height:11px;color:var(--muted)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .address input{font-size:10px;background:none;border:0;outline:0;min-width:0;width:100%;color:var(--secondary)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .code-window{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .file-tab{background:var(--dsw-specific-sidebar-fill);padding:11px 12px;font-size:11px;border-bottom:1px solid var(--line)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .code-window pre{font:12px/2 Consolas,var(--dsw-font-family);white-space:pre-wrap;margin:0;padding:18px 14px;color:var(--secondary)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .terminal{background:var(--dsw-static-neutral-bluish-950);color:var(--dsw-static-neutral-bluish-100);padding:18px 15px;border-radius:8px;min-height:250px;font:11px/2 Consolas,var(--dsw-font-family);white-space:pre-wrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plugin-card{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:18px;margin-bottom:15px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plugin-card h3{font-size:15px;margin:12px 0;font-weight:500}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plugin-card p{font-size:12px;line-height:1.9;color:var(--secondary)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-caption{font-size:10px;line-height:1.8;color:var(--muted);margin:12px 0}\n.tf-panel{grid-column:3;grid-row:2;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--surface);border-left:1px solid var(--dsw-alias-border-l3)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-tabs{display:flex;align-items:center;gap:7px;min-height:38px;height:38px;padding:0 10px;border-bottom:1px solid var(--line);font-size:12px;flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-tabs .tab{display:flex;align-items:center;gap:5px;border-bottom:2px solid var(--ink);height:38px;padding:0 6px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-tabs .tab svg{width:14px;height:14px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-tabs .iconbtn{margin-left:auto}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading{padding:16px 18px 14px;flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading h2{font-size:15px;font-weight:500;line-height:1.5;margin:0 0 8px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading p{font-size:12px;color:var(--muted);margin:0;line-height:1.8}\n:where(.tf-panel,.tf-tool,.tf-dialog) .progress-label{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:12px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .progress-label strong{font-weight:400;color:var(--secondary)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .progress-track{height:3px;background:var(--hover);border-radius:3px;overflow:hidden;margin-top:9px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .progress-track span{background:var(--blue);height:100%;display:block;transition:width .2s}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-controls{padding:0 16px 12px;display:flex;align-items:center;gap:7px;border-bottom:1px solid var(--line);flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .segments{display:flex;flex:1;padding:3px;border-radius:8px;background:var(--hover)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .segments button{flex:1;padding:4px 5px;border-radius:6px;color:var(--muted);font-size:11px;white-space:nowrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .segments button.selected{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px #00000008}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-controls select{font-size:11px;width:72px;padding:6px 2px;border:0;background:transparent;color:var(--secondary);border-radius:6px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-list{overflow:auto;flex:1;min-height:0;padding:10px 10px 16px;scrollbar-width:thin}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row{margin:2px 0;border-radius:8px;padding:11px 8px;cursor:pointer;border:1px solid transparent}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row:hover{background:var(--hover)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row.focused{background:var(--dsw-specific-bubble);border-color:var(--dsw-static-deepseek-100)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row.cancelled{opacity:.55}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row.context-only{background:transparent}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row.context-only .task-title{color:var(--muted)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-line{display:flex;gap:8px;align-items:flex-start}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-box{width:15px;height:15px;display:grid;place-items:center;border:1px solid var(--dsw-alias-border-l4);border-radius:4px;flex-shrink:0;margin-top:3px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-box svg{width:11px;height:11px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-box.completed{background:var(--blue);border-color:var(--blue);color:var(--dsw-static-neutral-00)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-box.running{border-color:var(--blue)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-box.running:before{content:"";width:5px;height:5px;border-radius:50%;background:var(--blue)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-copy{flex:1;min-width:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-title{font-size:13px;line-height:1.7;font-weight:400}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row.completed .task-title{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--dsw-alias-border-l4)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-meta{font-size:10px;color:var(--muted);display:flex;align-items:center;gap:5px;margin-top:4px;flex-wrap:wrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-meta code{font:10px Consolas,var(--dsw-font-family)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row .iconbtn{height:22px;width:20px;margin-right:-3px;color:var(--muted)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row .iconbtn svg{width:14px;height:14px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-status{display:flex;align-items:center;gap:7px;margin:8px 0 0 23px;font-size:11px;color:var(--muted);flex-wrap:wrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-status .pill{font-size:10px;padding:1px 5px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-status .btn{font-size:10px;min-height:23px;padding:2px 7px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .child-tasks{border-left:1px solid var(--line);margin-left:15px;padding-left:5px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-bottom{padding:12px 16px;border-top:1px solid var(--line);flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-bottom .btn{width:100%;font-size:12px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-bottom p{text-align:center;font-size:10px;color:var(--muted);margin:9px 0 0;line-height:1.8}\n:where(.tf-panel,.tf-tool,.tf-dialog) .empty{padding:35px 18px;color:var(--muted);font-size:13px;line-height:1.9;text-align:center}\n:where(.tf-panel,.tf-tool,.tf-dialog) .empty svg{width:24px;height:24px;margin-bottom:10px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .saved:before{content:"";width:5px;height:5px;border-radius:50%;background:var(--dsw-static-green-500);display:inline-block;vertical-align:2px;margin-right:5px}\n.tf-dialog{width:min(590px,calc(100vw - 28px));max-height:88dvh;padding:0;border:1px solid var(--line);border-radius:20px;background:var(--surface);color:var(--ink);box-shadow:0 10px 45px #00000020}\n.tf-dialog::backdrop{background:#00000040;backdrop-filter:blur(2px)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-head{padding:21px 24px 17px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);gap:12px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-head h2{font-size:17px;line-height:1.6;font-weight:500;margin:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-head small{display:block;font-size:10px;color:var(--muted);margin-bottom:5px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-body{padding:7px 24px 20px;max-height:calc(88dvh - 145px);overflow:auto;scrollbar-width:thin}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-actions{border-top:1px solid var(--line);display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:7px;padding:13px 24px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .notice{background:var(--hover);border-radius:12px;padding:12px 14px;margin:15px 0;font-size:12px;line-height:1.9;color:var(--secondary)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .notice.blue{background:var(--dsw-specific-bubble);color:var(--blue)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .notice.warn{background:var(--dsw-static-amber-100);color:#9a6c25}\nbody[data-ds-dark-theme] :where(.tf-panel,.tf-tool,.tf-dialog) .notice.warn{background:var(--dsw-static-amber-900);color:var(--dsw-static-amber-400)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .field{display:block;color:var(--secondary);font-size:12px;margin:17px 0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .field input,:where(.tf-panel,.tf-tool,.tf-dialog) .field textarea,:where(.tf-panel,.tf-tool,.tf-dialog) .field select{display:block;width:100%;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--surface);color:var(--ink);font-size:13px;line-height:1.8;padding:8px 10px;margin-top:7px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .field textarea{resize:vertical;min-height:85px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .field small{display:block;color:var(--muted);font-size:11px;line-height:1.8;margin-top:6px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .detail-kv{display:grid;grid-template-columns:86px 1fr;gap:12px;font-size:12px;line-height:1.9;margin:21px 0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .detail-kv dt{color:var(--muted)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .detail-kv dd{margin:0;overflow-wrap:anywhere}\n:where(.tf-panel,.tf-tool,.tf-dialog) .history{padding:12px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.9}\n:where(.tf-panel,.tf-tool,.tf-dialog) .history time{display:block;font-size:10px;color:var(--muted);margin-bottom:4px}\n@media(min-width:1700px){.tf-tool{flex-basis:49%}\n}\n@media(max-width:1250px){:where(.tf-panel,.tf-tool,.tf-dialog) .tool-content{padding:14px 10px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-title{font-size:12px}\n}\n@media(max-width:1080px){:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading{padding:15px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-controls{padding:0 12px 12px}\n}\n@media(max-width:790px){.tf-tool{min-width:0;max-width:none;flex:1}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-header .binding{font-size:10px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading{padding:20px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-controls{padding:0 18px 14px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-list{padding:0 16px 16px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-title{font-size:13px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-meta{font-size:11px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row{padding:12px 10px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-bottom{padding:12px 20px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-head{padding:18px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-body{padding:5px 18px 20px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-actions{padding:12px 18px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-actions .btn{font-size:12px;padding:0 10px}\n}\n';
+var prototype_default = '/* Generated from docs/prototype/dsh-taskflow-prd.html.\n * Original DeepSeek UI styles: MIT; see licenses/DeepSeek-MIT.txt.\n * Run npm run build to resync. */\n:where(.tf-panel,.tf-tool,.tf-dialog) .iconbtn{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:8px;color:var(--secondary);padding:0;flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .iconbtn svg{width:16px;height:16px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:36px;border:0;border-radius:12px;padding:0 14px;background:transparent;color:var(--ink);font-size:14px;line-height:22px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.small{min-height:28px;height:auto;padding:4px 10px;border-radius:8px;font-size:12px;line-height:18px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.outline{box-shadow:inset 0 0 0 var(--hairline) var(--dsw-alias-border-l3)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.primary{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.primary:hover{background:var(--dsw-alias-button-primary-hover)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.blue{color:var(--blue);background:var(--dsw-specific-bubble)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn.danger{color:var(--dsw-alias-state-danger-primary,#ec1313)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .btn svg{width:16px;height:16px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .subtle{color:var(--muted)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .pill{display:inline-flex;align-items:center;gap:5px;background:var(--hover);color:var(--secondary);font-size:11px;line-height:18px;padding:2px 7px;border-radius:6px;white-space:nowrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .pill.blue{color:var(--blue);background:var(--dsw-specific-bubble)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .pill.success{color:var(--dsw-alias-state-success-primary,#168349);background:var(--dsw-static-green-500-a08)}\n:where(.tf-panel,.tf-tool,.tf-dialog,.tf-session-tree,.tf-session-root) .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);display:inline-block;flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog,.tf-session-tree,.tf-session-root) .dot.running{background:var(--blue)}\n:where(.tf-panel,.tf-tool,.tf-dialog,.tf-session-tree,.tf-session-root) .dot.completed{background:var(--dsw-static-green-500)}\n:where(.tf-panel,.tf-tool,.tf-dialog,.tf-session-tree,.tf-session-root) .dot.awaiting_children{background:var(--dsw-static-amber-500)}\n:is(.tf-session-root,.tf-session-tree .session-row){display:flex;align-items:center;width:calc(100% - 6px);height:36px;border-radius:12px;text-align:left;margin:3px;gap:6px;padding:0 9px;font-size:13px;min-width:0}\n:is(.tf-session-root,.tf-session-tree .session-row).selected{background:var(--hover)}\n:is(.tf-session-root,.tf-session-tree .session-row) svg{width:16px;height:16px;color:var(--muted)}\n:is(.tf-session-root,.tf-session-tree .session-row) span.title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}\n.tf-session-tree .session-children{padding-left:14px;position:relative;margin-left:8px}\n.tf-session-tree .session-children:before{content:"";position:absolute;left:6px;top:3px;bottom:3px;width:1px;background:var(--line)}\n:is(.tf-session-root,.tf-session-tree .session-row) .dot{width:5px;height:5px}\n.tf-quick-replies{display:flex;align-items:center;gap:7px;flex-wrap:wrap;max-width:780px;margin:0 auto 11px}\n.tf-quick-replies button{font-size:11px;color:var(--secondary);border:1px solid var(--line);border-radius:8px;padding:5px 8px}\n.tf-tool{display:flex;flex-direction:column;flex:0 0 48%;max-width:650px;min-width:300px;min-height:0;border-right:1px solid var(--dsw-alias-border-l3);background:var(--surface);order:-1}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-header{height:38px;flex-shrink:0;display:flex;align-items:center;gap:7px;padding:0 10px;font-size:12px;border-bottom:1px solid var(--line)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-header svg{width:15px;height:15px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-header .binding{font-size:11px;color:var(--muted);margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-context{height:38px;flex-shrink:0;display:flex;align-items:center;gap:6px;padding:0 12px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--line)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-content{flex:1;min-height:0;overflow:auto;padding:20px 16px;background:var(--dsw-specific-sidebar-fill);scrollbar-width:thin}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-footer{padding:8px 12px;font-size:10px;color:var(--muted);border-top:1px solid var(--line);line-height:1.7}\n:where(.tf-panel,.tf-tool,.tf-dialog) .browser-window{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .browser-toolbar{height:42px;display:flex;align-items:center;gap:5px;border-bottom:1px solid var(--line);padding:0 8px;background:var(--dsw-specific-sidebar-fill)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .browser-toolbar .iconbtn{width:22px;height:25px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .browser-toolbar .iconbtn svg{width:13px;height:13px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .address{border:1px solid var(--line);border-radius:8px;background:var(--surface);height:26px;display:flex;align-items:center;gap:5px;flex:1;min-width:0;padding:0 8px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .address svg{width:11px;height:11px;color:var(--muted)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .address input{font-size:10px;background:none;border:0;outline:0;min-width:0;width:100%;color:var(--secondary)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .code-window{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .file-tab{background:var(--dsw-specific-sidebar-fill);padding:11px 12px;font-size:11px;border-bottom:1px solid var(--line)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .code-window pre{font:12px/2 Consolas,var(--dsw-font-family);white-space:pre-wrap;margin:0;padding:18px 14px;color:var(--secondary)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .terminal{background:var(--dsw-static-neutral-bluish-950);color:var(--dsw-static-neutral-bluish-100);padding:18px 15px;border-radius:8px;min-height:250px;font:11px/2 Consolas,var(--dsw-font-family);white-space:pre-wrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plugin-card{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:18px;margin-bottom:15px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plugin-card h3{font-size:15px;margin:12px 0;font-weight:500}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plugin-card p{font-size:12px;line-height:1.9;color:var(--secondary)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-caption{font-size:10px;line-height:1.8;color:var(--muted);margin:12px 0}\n.tf-panel{grid-column:3;grid-row:2;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--surface);border-left:1px solid var(--dsw-alias-border-l3)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-tabs{display:flex;align-items:center;gap:7px;min-height:38px;height:38px;padding:0 10px;border-bottom:1px solid var(--line);font-size:12px;flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-tabs .tab{display:flex;align-items:center;gap:5px;border-bottom:2px solid var(--ink);height:38px;padding:0 6px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-tabs .tab svg{width:14px;height:14px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-tabs .iconbtn{margin-left:auto}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading{padding:16px 18px 14px;flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading h2{font-size:15px;font-weight:500;line-height:1.5;margin:0 0 8px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading p{font-size:12px;color:var(--muted);margin:0;line-height:1.8}\n:where(.tf-panel,.tf-tool,.tf-dialog) .progress-label{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:12px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .progress-label strong{font-weight:400;color:var(--secondary)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .progress-track{height:3px;background:var(--hover);border-radius:3px;overflow:hidden;margin-top:9px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .progress-track span{background:var(--blue);height:100%;display:block;transition:width .2s}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-controls{padding:0 16px 12px;display:flex;align-items:center;gap:7px;border-bottom:1px solid var(--line);flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .segments{display:flex;flex:1;padding:3px;border-radius:8px;background:var(--hover)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .segments button{flex:1;padding:4px 5px;border-radius:6px;color:var(--muted);font-size:11px;white-space:nowrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .segments button.selected{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px #00000008}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-controls select{font-size:11px;width:72px;padding:6px 2px;border:0;background:transparent;color:var(--secondary);border-radius:6px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-list{overflow:auto;flex:1;min-height:0;padding:10px 10px 16px;scrollbar-width:thin}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row{margin:2px 0;border-radius:8px;padding:11px 8px;cursor:pointer;border:1px solid transparent}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row:hover{background:var(--hover)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row.focused{background:var(--dsw-specific-bubble);border-color:var(--dsw-static-deepseek-100)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row.cancelled{opacity:.55}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row.context-only{background:transparent}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row.context-only .task-title{color:var(--muted)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-line{display:flex;gap:8px;align-items:flex-start}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-box{width:15px;height:15px;display:grid;place-items:center;border:1px solid var(--dsw-alias-border-l4);border-radius:4px;flex-shrink:0;margin-top:3px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-box svg{width:11px;height:11px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-box.completed{background:var(--blue);border-color:var(--blue);color:var(--dsw-static-neutral-00)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-box.running{border-color:var(--blue)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-box.running:before{content:"";width:5px;height:5px;border-radius:50%;background:var(--blue)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-copy{flex:1;min-width:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-title{font-size:13px;line-height:1.7;font-weight:400}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row.completed .task-title{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--dsw-alias-border-l4)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-meta{font-size:10px;color:var(--muted);display:flex;align-items:center;gap:5px;margin-top:4px;flex-wrap:wrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-meta code{font:10px Consolas,var(--dsw-font-family)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row .iconbtn{height:22px;width:20px;margin-right:-3px;color:var(--muted)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row .iconbtn svg{width:14px;height:14px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-status{display:flex;align-items:center;gap:7px;margin:8px 0 0 23px;font-size:11px;color:var(--muted);flex-wrap:wrap}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-status .pill{font-size:10px;padding:1px 5px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-status .btn{font-size:10px;min-height:23px;padding:2px 7px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .child-tasks{border-left:1px solid var(--line);margin-left:15px;padding-left:5px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-bottom{padding:12px 16px;border-top:1px solid var(--line);flex-shrink:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-bottom .btn{width:100%;font-size:12px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-bottom p{text-align:center;font-size:10px;color:var(--muted);margin:9px 0 0;line-height:1.8}\n:where(.tf-panel,.tf-tool,.tf-dialog) .empty{padding:35px 18px;color:var(--muted);font-size:13px;line-height:1.9;text-align:center}\n:where(.tf-panel,.tf-tool,.tf-dialog) .empty svg{width:24px;height:24px;margin-bottom:10px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .saved:before{content:"";width:5px;height:5px;border-radius:50%;background:var(--dsw-static-green-500);display:inline-block;vertical-align:2px;margin-right:5px}\n.tf-dialog{width:min(590px,calc(100vw - 28px));max-height:88dvh;padding:0;border:1px solid var(--line);border-radius:20px;background:var(--surface);color:var(--ink);box-shadow:0 10px 45px #00000020}\n.tf-dialog::backdrop{background:#00000040;backdrop-filter:blur(2px)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-head{padding:21px 24px 17px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);gap:12px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-head h2{font-size:17px;line-height:1.6;font-weight:500;margin:0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-head small{display:block;font-size:10px;color:var(--muted);margin-bottom:5px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-body{padding:7px 24px 20px;max-height:calc(88dvh - 145px);overflow:auto;scrollbar-width:thin}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-actions{border-top:1px solid var(--line);display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:7px;padding:13px 24px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .notice{background:var(--hover);border-radius:12px;padding:12px 14px;margin:15px 0;font-size:12px;line-height:1.9;color:var(--secondary)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .notice.blue{background:var(--dsw-specific-bubble);color:var(--blue)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .notice.warn{background:var(--dsw-static-amber-100);color:#9a6c25}\nbody[data-ds-dark-theme] :where(.tf-panel,.tf-tool,.tf-dialog) .notice.warn{background:var(--dsw-static-amber-900);color:var(--dsw-static-amber-400)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .field{display:block;color:var(--secondary);font-size:12px;margin:17px 0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .field input,:where(.tf-panel,.tf-tool,.tf-dialog) .field textarea,:where(.tf-panel,.tf-tool,.tf-dialog) .field select{display:block;width:100%;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--surface);color:var(--ink);font-size:13px;line-height:1.8;padding:8px 10px;margin-top:7px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .field textarea{resize:vertical;min-height:85px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .field small{display:block;color:var(--muted);font-size:11px;line-height:1.8;margin-top:6px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .detail-kv{display:grid;grid-template-columns:86px 1fr;gap:12px;font-size:12px;line-height:1.9;margin:21px 0}\n:where(.tf-panel,.tf-tool,.tf-dialog) .detail-kv dt{color:var(--muted)}\n:where(.tf-panel,.tf-tool,.tf-dialog) .detail-kv dd{margin:0;overflow-wrap:anywhere}\n:where(.tf-panel,.tf-tool,.tf-dialog) .history{padding:12px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.9}\n:where(.tf-panel,.tf-tool,.tf-dialog) .history time{display:block;font-size:10px;color:var(--muted);margin-bottom:4px}\n@media(min-width:1700px){.tf-tool{flex-basis:49%}\n}\n@media(max-width:1250px){:where(.tf-panel,.tf-tool,.tf-dialog) .tool-content{padding:14px 10px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-title{font-size:12px}\n}\n@media(max-width:1080px){:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading{padding:15px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-controls{padding:0 12px 12px}\n}\n@media(max-width:790px){.tf-quick-replies{gap:5px}\n.tf-quick-replies button{font-size:10px;padding:4px 6px}\n.tf-tool{min-width:0;max-width:none;flex:1}\n:where(.tf-panel,.tf-tool,.tf-dialog) .tool-header .binding{font-size:10px}\n:is(.tf-session-root,.tf-session-tree .session-row){height:40px;font-size:14px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-heading{padding:20px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-controls{padding:0 18px 14px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-list{padding:0 16px 16px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-title{font-size:13px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-meta{font-size:11px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .task-row{padding:12px 10px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .plan-bottom{padding:12px 20px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-head{padding:18px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-body{padding:5px 18px 20px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-actions{padding:12px 18px}\n:where(.tf-panel,.tf-tool,.tf-dialog) .dialog-actions .btn{font-size:12px;padding:0 10px}\n}\n';
+
+// taskflow-source:src/client/hooks/use-header-entry-target.mjs
+var import_react11 = require("react");
+function useHeaderEntryTarget(anchor) {
+  const [target, setTarget] = (0, import_react11.useState)(null);
+  (0, import_react11.useEffect)(() => {
+    const header = anchor.current?.closest("header");
+    if (!header) return;
+    const node = document.createElement("span");
+    node.className = "tf-header-entry-mount";
+    const attach = () => {
+      const progress2 = header.querySelector("[data-conversation-header-corner] [data-tp-entry]");
+      if (progress2?.parentElement) {
+        if (progress2.nextElementSibling !== node) progress2.after(node);
+        setTarget((current) => current === node ? current : node);
+      } else {
+        node.remove();
+        setTarget((current) => current === null ? current : null);
+      }
+    };
+    const observer = new MutationObserver(attach);
+    observer.observe(header, { childList: true, subtree: true });
+    attach();
+    return () => {
+      observer.disconnect();
+      node.remove();
+    };
+  }, [anchor]);
+  return target;
+}
+
+// taskflow-source:src/client/embedded-preview.mjs
+function embedPreview({ sidebar, sessionId, tabId, container }) {
+  const doc = container.ownerDocument, win = doc.defaultView;
+  let frame, pane, host, hostLayer, disposed = false;
+  const previous = /* @__PURE__ */ new Map();
+  const set = (name, value) => {
+    if (!previous.has(name)) previous.set(name, [pane.style.getPropertyValue(name), pane.style.getPropertyPriority(name)]);
+    if (pane.style.getPropertyValue(name) !== value || pane.style.getPropertyPriority(name) !== "important") pane.style.setProperty(name, value, "important");
+  };
+  const restore = () => {
+    if (!pane) return;
+    pane.classList.remove("tf-host-preview");
+    for (const [name, [value, priority]] of previous) value ? pane.style.setProperty(name, value, priority) : pane.style.removeProperty(name);
+    if (host) {
+      const [value, priority] = hostLayer;
+      value ? host.style.setProperty("--dsh-dockkit-float-layer", value, priority) : host.style.removeProperty("--dsh-dockkit-float-layer");
+    }
+    previous.clear();
+    pane = void 0;
+    host = void 0;
+  };
+  const update = () => {
+    if (disposed) return;
+    if (!pane?.isConnected || !pane.hasAttribute("data-dockkit-float")) {
+      const body = [...doc.querySelectorAll("[data-sidebar-right-tab]")].find((node) => node.dataset.sidebarRightTab === tabId && node.closest("[data-dockkit-float]"));
+      const nextPane = body?.closest("[data-dockkit-float]");
+      if (pane !== nextPane) {
+        restore();
+        pane = nextPane;
+      }
+    }
+    if (pane) {
+      if (!host) {
+        host = pane.closest('[data-dockkit-host="float"]');
+        if (host) hostLayer = [host.style.getPropertyValue("--dsh-dockkit-float-layer"), host.style.getPropertyPriority("--dsh-dockkit-float-layer")];
+      }
+      pane.classList.add("tf-host-preview");
+      const rect = container.getBoundingClientRect(), scrollport = container.closest(".tool-content")?.getBoundingClientRect() ?? rect;
+      const top = Math.max(0, scrollport.top, rect.top), bottom = Math.min(win.innerHeight, scrollport.bottom, rect.bottom);
+      const left = Math.max(0, scrollport.left, rect.left), right = Math.min(win.innerWidth, scrollport.right, rect.right);
+      const visible = container.isConnected && sidebar.mounted.getSnapshot() === sessionId && rect.width > 0 && rect.height > 0 && bottom > top && right > left && win.getComputedStyle(container.closest(".tf-tool-mount") ?? container).display !== "none";
+      set("visibility", visible ? "visible" : "hidden");
+      set("left", `${rect.left}px`);
+      set("top", `${rect.top}px`);
+      set("width", `${rect.width}px`);
+      set("height", `${rect.height}px`);
+      set("min-width", "0px");
+      set("min-height", "0px");
+      set("max-width", "none");
+      set("max-height", "none");
+      set("transform", "none");
+      set("z-index", container.closest(".tf-tool-floating") ? "1201" : "30");
+      const layer = container.closest(".tf-tool-floating") ? "1201" : "60";
+      if (host && host.style.getPropertyValue("--dsh-dockkit-float-layer") !== layer) host.style.setProperty("--dsh-dockkit-float-layer", layer);
+      set("clip-path", `inset(${Math.max(0, top - rect.top)}px ${Math.max(0, rect.right - right)}px ${Math.max(0, rect.bottom - bottom)}px ${Math.max(0, left - rect.left)}px)`);
+    }
+    frame = win.requestAnimationFrame(update);
+  };
+  update();
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    win.cancelAnimationFrame(frame);
+    restore();
+    sidebar.closeIn(sessionId, tabId);
+  };
+}
+
+// taskflow-source:src/client/tool-openers.mjs
+function sessionFileAddress(sessionId, path) {
+  const encode = (s) => encodeURIComponent(s).replace(/%3A/gi, ":");
+  return `dsh-resource://file/session/${encode(sessionId)}/${path.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "").split("/").map(encode).join("/")}`;
+}
+function createToolOpeners(ctx) {
+  const browserUrls = /* @__PURE__ */ new Map();
+  const get = (name) => ctx.get ? ctx.get(name) : ctx[name];
+  const foreground = (sid) => {
+    const sidebar = get("sidebarRight");
+    if (!sidebar?.mounted || sidebar.mounted.getSnapshot() !== sid) throw new Error("请先打开此任务会话，再打开工具产物");
+    return sidebar;
+  };
+  return {
+    async openDocument(sid, file, { container } = {}) {
+      const sidebar = foreground(sid), address = sessionFileAddress(sid, file.path), tabs = get("sidebarRightTabs");
+      let claim;
+      try {
+        claim = tabs?.claim(address);
+      } catch {
+        throw new Error("文档预览插件尚未就绪，请启用后重试");
+      }
+      if (!claim) throw new Error("文档预览插件尚未就绪，请启用后重试");
+      if (container) {
+        if (!sidebar.float || !sidebar.active || !sidebar.closeIn) throw new Error("当前宿主不支持工具区文档预览，请更新宿主");
+        const previous = sidebar.active(), expanded = sidebar.isExpanded();
+        const restorePanel = () => {
+          if (previous) sidebar.focus(previous.id);
+          if (!expanded && sidebar.isExpanded()) sidebar.toggleExpanded();
+        };
+        sidebar.openResource(address, { revealIfOpened: false });
+        const tab = sidebar.active();
+        if (!tab || tab.id === previous?.id || tab.contentId !== address) throw new Error("宿主未建立文档预览，请重试");
+        try {
+          sidebar.float(tab.id);
+          restorePanel();
+          return { message: "已在工具视图中打开", dispose: embedPreview({ sidebar, sessionId: sid, tabId: tab.id, container }) };
+        } catch (error) {
+          sidebar.closeIn(sid, tab.id);
+          restorePanel();
+          throw error;
+        }
+      }
+      await sidebar.openResource(address, { destination: "float" });
+      return "已交给文档插件打开";
+    },
+    async openBrowser(sid, url, { automatic = false } = {}) {
+      const sidebar = foreground(sid);
+      if (!get("sidebarRightTabs")?.get("browser")) throw new Error("浏览器插件尚未就绪，请启用后重试");
+      if (automatic && browserUrls.get(sid) === url) return "此地址已交给浏览器插件打开";
+      sidebar.openTab("browser", { params: { url } });
+      browserUrls.set(sid, url);
+      return "已交给浏览器插件打开";
+    }
+  };
+}
+
+// taskflow-source:src/client/hooks/use-compact-checklist.mjs
+var import_react12 = require("react");
+var MIN_WIDTH = 280;
+var MAX_WIDTH = 720;
+var STORAGE_KEY = "dsh-taskflow:checklist-width";
+var clamp = (width, max) => Math.round(Math.max(MIN_WIDTH, Math.min(width, max)));
+var savedWidth = () => {
+  try {
+    const width = JSON.parse(window.localStorage.getItem(STORAGE_KEY));
+    return Number.isFinite(width) ? clamp(width, MAX_WIDTH) : 300;
+  } catch {
+    return 300;
+  }
+};
+function useCompactChecklist(enabled) {
+  const anchor = (0, import_react12.useRef)(null), desired = (0, import_react12.useRef)(null), bridge = (0, import_react12.useRef)(null), stopDrag = (0, import_react12.useRef)(() => {
+  });
+  if (desired.current === null) desired.current = savedWidth();
+  const [panel, setPanel] = (0, import_react12.useState)(null), [size, setSize] = (0, import_react12.useState)({ width: 300, max: MAX_WIDTH }), [dragging, setDragging] = (0, import_react12.useState)(false);
+  const save = () => {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(desired.current));
+    } catch {
+    }
+  };
+  (0, import_react12.useEffect)(() => {
+    if (!enabled) return;
+    const panel2 = anchor.current?.closest('[data-sidebar-right-panel="push"]');
+    const frame = panel2?.closest("[data-rightbar-col]")?.parentElement;
+    if (!frame || !/^\s*[\d.]+px\s/.test(frame.style.gridTemplateColumns)) return;
+    const sync = () => {
+      const first = frame.style.gridTemplateColumns.match(/^\s*([\d.]+px)\s/)?.[1];
+      if (!first) return;
+      const viewport = frame.getBoundingClientRect().width || window.innerWidth;
+      const max = Math.max(MIN_WIDTH, Math.floor(Math.min(MAX_WIDTH, viewport * 0.7, viewport - parseFloat(first) - 400)));
+      const width = clamp(desired.current, max);
+      for (const [name, value] of [["--tf-sidebar-track", first], ["--tf-checklist-width", `${width}px`]]) if (frame.style.getPropertyValue(name) !== value) frame.style.setProperty(name, value);
+      bridge.current = { sync, width, max };
+      setSize((previous) => previous.width === width && previous.max === max ? previous : { width, max });
+    };
+    sync();
+    panel2.dataset.tfCompactChecklist = "";
+    setPanel(panel2);
+    const observer = new MutationObserver(sync);
+    observer.observe(frame, { attributes: true, attributeFilter: ["style"] });
+    const resize = typeof window.ResizeObserver === "function" ? new window.ResizeObserver(sync) : null;
+    resize?.observe(frame);
+    window.addEventListener("resize", sync);
+    return () => {
+      stopDrag.current();
+      observer.disconnect();
+      resize?.disconnect();
+      window.removeEventListener("resize", sync);
+      bridge.current = null;
+      setPanel(null);
+      delete panel2.dataset.tfCompactChecklist;
+      if (!frame.querySelector("[data-tf-compact-checklist]")) {
+        frame.style.removeProperty("--tf-sidebar-track");
+        frame.style.removeProperty("--tf-checklist-width");
+      }
+    };
+  }, [enabled]);
+  const onPointerDown = (event) => {
+    if (event.button !== 0 || !bridge.current) return;
+    event.preventDefault();
+    stopDrag.current();
+    const startX = event.clientX, startWidth = bridge.current.width, pointerId = event.pointerId, handle = event.currentTarget;
+    const move = (e) => {
+      if (e.pointerId !== pointerId || !bridge.current) return;
+      desired.current = clamp(startWidth + startX - e.clientX, bridge.current.max);
+      bridge.current.sync();
+    };
+    const end = (e) => {
+      if (e?.pointerId !== void 0 && e.pointerId !== pointerId) return;
+      stopDrag.current = () => {
+      };
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", end, true);
+      window.removeEventListener("blur", end);
+      handle.removeEventListener("lostpointercapture", end);
+      if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+      setDragging(false);
+      save();
+    };
+    const up = (e) => {
+      if (e.pointerId === pointerId) {
+        move(e);
+        end(e);
+      }
+    };
+    stopDrag.current = end;
+    setDragging(true);
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", end, true);
+    window.addEventListener("blur", end);
+    handle.addEventListener("lostpointercapture", end);
+    handle.setPointerCapture?.(pointerId);
+  };
+  const onKeyDown = (event) => {
+    if (!bridge.current || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    desired.current = clamp(event.key === "Home" ? MIN_WIDTH : event.key === "End" ? bridge.current.max : bridge.current.width + (event.key === "ArrowLeft" ? 24 : -24), bridge.current.max);
+    bridge.current.sync();
+    save();
+  };
+  return { anchor, panel, dragging, separator: { role: "separator", tabIndex: 0, "aria-label": "调整待办任务清单宽度", "aria-orientation": "vertical", "aria-valuemin": MIN_WIDTH, "aria-valuemax": size.max, "aria-valuenow": size.width, onPointerDown, onKeyDown } };
+}
 
 // taskflow-source:src/client/index.jsx
 var inject = ["slots", "sessions", "connection"];
 function createApi(connection) {
   const call = async (method, data) => {
-    const result = await connection.rpc.call("/taskflow", method, data);
+    const result = await connection.rpc.call("/api", method, data);
     if (!result.ok) throw new Error(result.error.message);
     return result.value;
   };
-  return { view: (sessionId) => call("view", { sessionId }), action: (sessionId, action, data) => call("action", { sessionId, action, ...data }) };
+  return { view: (sessionId) => call("taskflow/view", { sessionId }), action: (sessionId, action, data) => call("taskflow/action", { sessionId, action, ...data }) };
 }
 function apply(ctx) {
   const api = createApi(ctx.connection), renderers = /* @__PURE__ */ new Map();
+  const panels = /* @__PURE__ */ new Map(), panelListeners = /* @__PURE__ */ new Set();
+  const updatePanel = (key, value) => {
+    value ? panels.set(key, value) : panels.delete(key);
+    panelListeners.forEach((fn) => fn());
+  };
   ctx.provide("taskflowViews", { register(kind, component) {
     renderers.set(kind, component);
     return () => {
@@ -226,35 +918,79 @@ function apply(ctx) {
   ctx.effect(() => {
     const style = document.createElement("style");
     style.dataset.dshTaskflow = "";
-    style.textContent = styles_default + "\n" + prototype_default;
+    style.textContent = prototype_default + "\n" + styles_default;
     document.head.append(style);
     return () => style.remove();
   });
   ctx.inject(["sidebarRightTabs", "sidebarRight", "uiWorkspace"], (scope) => {
-    scope.effect(() => scope.sidebarRightTabs.register({ id: "dsh-taskflow", kind: "taskflow", priority: "extension", keepMounted: true, title: () => "待办任务清单", guide: [{ id: "taskflow", order: 0, title: () => "待办任务清单", description: () => "持久层级待办" }] }));
+    const openers = createToolOpeners(scope);
+    scope.effect(() => scope.sidebarRightTabs.register({ id: "dsh-taskflow", kind: "taskflow", priority: "extension", keepMounted: true, title: () => "待办任务清单", guide: [{ id: "taskflow", order: 0, title: () => "待办任务清单", icon: TaskIcon, description: () => "持久层级待办" }] }));
     const register = (slot, options, Component) => scope.effect(() => scope.slots.inject(slot, () => scope.slots.register({ name: slot, ...options }, Component)));
-    const augment = (props, value) => {
-      const binding = ctx.sessions.binding(props.sessionId);
-      const input = binding && ctx.conversation?.input?.for(binding.ctx);
-      if (input) {
-        input.setDraft(value);
-        input.focus();
-      } else props.inputActions?.setDraft(value);
+    const augment = async (props, value, target) => {
+      const sid = typeof target === "string" ? target : target?.childSessionId || props.sessionId;
+      if (target) scope.uiWorkspace.openSession(target);
+      const deadline = Date.now() + 2500;
+      do {
+        const binding = ctx.sessions.binding(sid), input = binding && ctx.conversation?.input?.for(binding.ctx);
+        if (input) {
+          input.setDraft(value);
+          input.focus();
+          return;
+        }
+        if (sid === props.sessionId && props.inputActions) {
+          props.inputActions.setDraft(value);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } while (Date.now() < deadline);
+      throw new Error("负责会话尚未就绪，请返回父会话后增补事项");
     };
     function Panel(props) {
-      const view = useTaskflow(api, props.sessionId);
-      return /* @__PURE__ */ import_react6.default.createElement(TaskPanel, { view, sessionId: props.sessionId, action: (type, data) => api.action(props.sessionId, type, data), navigate: (id) => scope.uiWorkspace.openSession(id), augment: (value) => augment(props, value) });
+      const view = useTaskflow(api, props.sessionId), tabInfo = props.useTabInfo?.(), key = (0, import_react13.useRef)(Symbol());
+      const visible = tabInfo?.tab.visible;
+      const compact = useCompactChecklist(visible === true && !tabInfo?.sidebar?.fullscreen && !tabInfo?.panel?.isFloating);
+      (0, import_react13.useEffect)(() => {
+        if (tabInfo) updatePanel(key.current, { sid: props.sessionId, visible });
+        return () => updatePanel(key.current);
+      }, [props.sessionId, visible]);
+      const recordTask = Object.values(view.plan?.tasks ?? {}).find((t) => t.recordSession?.id === props.sessionId || t.recordHistory?.some((r) => r.id === props.sessionId));
+      return /* @__PURE__ */ import_react13.default.createElement("div", { ref: compact.anchor, className: "tf-checklist-root" }, /* @__PURE__ */ import_react13.default.createElement(TaskPanel, { view, sessionId: props.sessionId, action: (type, data) => api.action(props.sessionId, type, data), navigate: (id) => scope.uiWorkspace.openSession(id), augment: (value) => augment(props, value, recordTask && executionTarget(view.plan, recordTask)) }), compact.panel && (0, import_react_dom4.createPortal)(/* @__PURE__ */ import_react13.default.createElement("div", { className: "tf-checklist-resizer", ...compact.separator }), compact.panel), compact.dragging && (0, import_react_dom4.createPortal)(/* @__PURE__ */ import_react13.default.createElement("div", { className: "tf-checklist-resize-shield" }), document.body));
     }
     register("sidebar.right.pane.tab", { key: "dsh-taskflow" }, Panel);
+    function Tree(props) {
+      const current = scope.sidebarRight.mounted;
+      const sid = (0, import_react13.useSyncExternalStore)(current ? (listener) => current.subscribe(listener) : () => () => {
+      }, current ? () => current.getSnapshot() : () => null);
+      return /* @__PURE__ */ import_react13.default.createElement(SessionTree, { api, sessionId: props.sessionId, currentSessionId: sid, navigate: (target) => scope.uiWorkspace.openSession(target) });
+    }
+    register("sidebar.session.row.trailing", { id: "taskflow-children", order: 10 }, Tree);
+    function Replies(props) {
+      const current = scope.sidebarRight.mounted;
+      const foreground = (0, import_react13.useSyncExternalStore)(current ? (listener) => current.subscribe(listener) : () => () => {
+      }, current ? () => current.getSnapshot() === props.sessionId : () => true);
+      return /* @__PURE__ */ import_react13.default.createElement(QuickReplies, { key: props.sessionId, api, ...props, foreground, focus: () => {
+        const binding = ctx.sessions.binding(props.sessionId);
+        if (binding) ctx.conversation?.input?.for(binding.ctx)?.focus();
+      } });
+    }
+    register("conversation.input.dock", { id: "taskflow-quick-replies", order: -10 }, Replies);
     function SessionEntry(props) {
-      const view = useTaskflow(api, props.sessionId), [mount, setMount] = (0, import_react6.useState)(null), [showTool, setShowTool] = (0, import_react6.useState)(true), autoOpened = (0, import_react6.useRef)(false);
-      (0, import_react6.useEffect)(() => {
+      const entryAnchor = (0, import_react13.useRef)(null), entryTarget = useHeaderEntryTarget(entryAnchor);
+      const panelVisible = (0, import_react13.useSyncExternalStore)((fn) => {
+        panelListeners.add(fn);
+        return () => panelListeners.delete(fn);
+      }, () => [...panels.values()].some((p) => p.sid === props.sessionId && p.visible));
+      const current = scope.sidebarRight.mounted;
+      const foreground = (0, import_react13.useSyncExternalStore)(current ? (listener) => current.subscribe(listener) : () => () => {
+      }, current ? () => current.getSnapshot() === props.sessionId : () => true);
+      const view = useTaskflow(api, props.sessionId), [mount, setMount] = (0, import_react13.useState)(null), [showTool, setShowTool] = (0, import_react13.useState)(true), [, refreshEntry] = (0, import_react13.useState)(0), autoOpened = (0, import_react13.useRef)(false);
+      (0, import_react13.useEffect)(() => {
         if (mount) mount.parentElement?.classList.toggle("tf-tool-show-tool", showTool);
       }, [mount, showTool]);
-      (0, import_react6.useEffect)(() => {
+      (0, import_react13.useEffect)(() => {
         if (view.tool?.open) setShowTool(true);
       }, [view.tool?.open, props.sessionId]);
-      (0, import_react6.useEffect)(() => {
+      (0, import_react13.useEffect)(() => {
         if (view.plan && !autoOpened.current) {
           try {
             scope.sidebarRight.openTab("taskflow");
@@ -263,10 +999,10 @@ function apply(ctx) {
           }
         }
       }, [view.plan?.id, props.sessionId]);
-      (0, import_react6.useEffect)(() => {
+      (0, import_react13.useEffect)(() => {
         autoOpened.current = false;
       }, [props.sessionId]);
-      (0, import_react6.useEffect)(() => {
+      (0, import_react13.useEffect)(() => {
         if (!view.tool?.open) {
           setMount(null);
           return;
@@ -303,8 +1039,17 @@ function apply(ctx) {
           setMount(null);
         };
       }, [view.tool?.open, props.sessionId]);
-      const Renderer = renderers.get(view.tool?.kind);
-      return /* @__PURE__ */ import_react6.default.createElement(import_react6.default.Fragment, null, /* @__PURE__ */ import_react6.default.createElement("button", { className: "tf-entry", onClick: () => scope.sidebarRight.openTab("taskflow") }, /* @__PURE__ */ import_react6.default.createElement(Icon, { name: "check" }), "任务"), view.tool?.open && /* @__PURE__ */ import_react6.default.createElement("span", { className: "tf-mobile-view" }, /* @__PURE__ */ import_react6.default.createElement("button", { "aria-pressed": !showTool, onClick: () => setShowTool(false) }, "看对话"), /* @__PURE__ */ import_react6.default.createElement("button", { "aria-pressed": showTool, onClick: () => setShowTool(true) }, "看工具")), mount && (0, import_react_dom2.createPortal)(/* @__PURE__ */ import_react6.default.createElement(ToolPanel, { tool: view.tool, onClose: () => void api.action(props.sessionId, "close-view", {}), renderer: Renderer ? (tool) => /* @__PURE__ */ import_react6.default.createElement(Renderer, { tool, sessionId: props.sessionId }) : null }), mount));
+      const renderer = (tool, file) => {
+        const Renderer = renderers.get(file?.format) || renderers.get(tool.kind);
+        return Renderer ? /* @__PURE__ */ import_react13.default.createElement(Renderer, { tool, file, sessionId: props.sessionId }) : null;
+      };
+      const expanded = scope.sidebarRight.isExpanded() && (panelVisible || scope.sidebarRight.active()?.kind === "taskflow");
+      const entry = /* @__PURE__ */ import_react13.default.createElement("button", { type: "button", className: "tf-entry", title: expanded ? "收起待办任务清单" : "展开待办任务清单", "aria-label": "待办任务清单", "aria-expanded": expanded, onClick: () => {
+        if (scope.sidebarRight.isExpanded() && (panelVisible || scope.sidebarRight.active()?.kind === "taskflow")) scope.sidebarRight.toggleExpanded();
+        else scope.sidebarRight.openTab("taskflow");
+        refreshEntry((n) => n + 1);
+      } }, /* @__PURE__ */ import_react13.default.createElement(TaskIcon, null), /* @__PURE__ */ import_react13.default.createElement("span", null, "任务"));
+      return /* @__PURE__ */ import_react13.default.createElement(import_react13.default.Fragment, null, /* @__PURE__ */ import_react13.default.createElement("span", { ref: entryAnchor, className: "tf-entry-anchor" }, entryTarget ? (0, import_react_dom4.createPortal)(entry, entryTarget) : entry), view.tool?.open && /* @__PURE__ */ import_react13.default.createElement("span", { className: "tf-mobile-view" }, /* @__PURE__ */ import_react13.default.createElement("button", { "aria-pressed": !showTool, onClick: () => setShowTool(false) }, "看对话"), /* @__PURE__ */ import_react13.default.createElement("button", { "aria-pressed": showTool, onClick: () => setShowTool(true) }, "看工具")), mount && (0, import_react_dom4.createPortal)(/* @__PURE__ */ import_react13.default.createElement(ToolPanel, { key: props.sessionId, sessionId: props.sessionId, mount, tool: view.tool, onClose: () => void api.action(props.sessionId, "close-view", {}), renderer, openers, foreground }), mount));
     }
     register("conversation.session.header.utilities", { id: "taskflow", order: -5 }, SessionEntry);
   });

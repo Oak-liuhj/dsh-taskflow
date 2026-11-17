@@ -11,8 +11,9 @@ import * as Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl';
 import { mountAgentLoopTestDependencies, mountAgentLoopTestHarness } from '@deepseek-ai/dsh-agent-loop-testkit';
 import * as Plugin from '../index.js';
 import { syncPrdAssets } from './prd-assets.mjs';
+import { sessionTree } from '../src/client/model.mjs';
 
-const root = process.cwd(), dataDir = join(root, '.local/dev');
+const root = process.cwd(), dataDir = process.env.TASKFLOW_DEV_DATA || join(root, '.local/dev');
 await mkdir(dataDir, { recursive: true });
 const ctx = new Context(), queues = new Map();
 await mountAgentLoopTestDependencies(ctx, { workingDirectory: true });
@@ -24,7 +25,17 @@ ctx.llm.registerAdapter(['fixture'], new class extends LlmAdapter {
   async resolveModel(provider, model) { return { provider, id: model, name: model }; }
   async *stream(options) {
     await new Promise(resolve => setTimeout(resolve, 300));
+    if (options.purpose === 'taskflow.quick-replies') {
+      const p = ctx.taskflow.service.view(options.sessionId).plan;
+      const next = Object.values(p?.tasks ?? {}).find(t => !['completed', 'cancelled'].includes(t.status));
+      yield { type: 'block-end', index: 0, block: { type: 'text', text: JSON.stringify([{ label: '查看进度', text: '汇报现有计划的实际进度和阻塞原因，不重建清单。' }, { label: next ? `继续执行 ${next.id}` : '整理完成结果', text: next ? `继续执行 ${next.id}，保留已完成事项。` : '整理已完成事项的结果与证据。' }, { label: '新增异常文件检查', text: '在文件校验事项下增补异常文件检查，先确认具体父任务。' }]) } };
+      yield { type: 'finish', reason: { kind: 'stop' } }; return;
+    }
     const sid = options.sessionId, view = ctx.taskflow.service.view(sid), own = view.currentTaskId;
+    if (ctx.taskflow.planning.taskToAssess({ session: { id: sid } })) {
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: crypto.randomUUID(), name: 'taskflow_assess', arguments: JSON.stringify({ taskId: own, needsPlan: false, reason: '固定响应模型的单步演练，不执行真实业务或自动复杂度判断' }) } };
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }; return;
+    }
     const job = queues.get(sid)?.shift();
     const call = job ? await job() : sid !== 'taskflow-dev-main' && view.plan?.tasks[own]?.status === 'running' ? done('固定响应模型已完成子会话流程演练；此摘要不代表真实业务执行。') : null;
     if (call) { yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: crypto.randomUUID(), name: call.name, arguments: JSON.stringify(call.args) } }; yield { type: 'finish', reason: { kind: 'tool-calls' } }; }
@@ -48,7 +59,7 @@ const shell = await readFile(join(root, 'scripts/dev.html'), 'utf8');
 function command(sid, prompt) {
   const service = ctx.taskflow.service, p = service.view(sid).plan;
   const tool = (name, args) => () => ({ name, args });
-  if (!p) return [tool('taskflow_plan', { title: prompt.slice(0, 50), goal: prompt, tasks: [{ title: '梳理目标与约束' }, { title: '独立子任务流程验证', complexity: 'high', independent: true }] })];
+  if (!p) return [tool('taskflow_plan', { title: prompt.slice(0, 50), goal: prompt, tasks: [{ title: '确认导入范围与边界', ref: 'scope' }, { title: '定义文档结构与去重', ref: 'schema', parentId: 'scope' }, { title: '异常文件检查', parentId: 'schema' }, { title: '独立子任务流程验证', complexity: 'high', independent: true }] })];
   const add = prompt.match(/^(?:在\s*(.+?)\s*下)?新增(?:一个)?\s*(.+)$/);
   if (add) return [tool('taskflow_add', { parentId: add[1]?.trim(), tasks: [{ title: add[2].trim() }] })];
   const start = prompt.match(/继续执行\s*(T-\d+)/);
@@ -59,8 +70,8 @@ async function body(req) {
   let raw = ''; for await (const chunk of req) { raw += chunk; if (raw.length > 200000) throw new Error('请求过大'); } return JSON.parse(raw || '{}');
 }
 function messages(sid) {
-  const a = ctx.agents.get(sid); if (!a) return [];
-  return a.session.snapshotEvents().filter(e => ['user/message', 'assistant/message'].includes(e.type)).flatMap(e => {
+  const session = ctx.agents.get(sid)?.session || ctx.sessions.get(sid); if (!session) return [];
+  return session.snapshotEvents().filter(e => ['user/message', 'assistant/message'].includes(e.type)).flatMap(e => {
     const m = e.data.message ?? e.data;
     if (m.source?.kind === 'runtime-context' || m.source?.summary === '持久任务状态') return [];
     const content = (m.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
@@ -84,16 +95,25 @@ const server = createServer(async (req, res) => {
       if (a.method === 'taskflow/view') result = s.view(sid);
       else if (a.method === 'taskflow/action') {
         if (a.action === 'focus') result = await s.focus(sid, a.taskId);
+        else if (a.action === 'resume') {
+          const request = s.continuation(sid, a.taskId, a.version);
+          const owner = request.ancestors.find(t => t.mode === 'delegate' && !['running', 'awaiting_children'].includes(t.status));
+          queues.set(request.rootSessionId, command(request.rootSessionId, `继续执行 ${owner?.id || a.taskId}`));
+          result = await ctx.taskflow.actions.resume(sid, a.taskId, a.version);
+        }
         else if (a.action === 'cancel') result = await s.cancel(sid, a.taskId, a.version);
         else if (a.action === 'reorder') result = await s.reorder(sid, a.taskId, a.direction, a.expectedVersion);
         else if (a.action === 'close-view') result = await s.closeView(sid);
+        else if (a.action === 'quick-replies') result = await ctx.taskflow.replies.request(sid, a.refresh === true);
         else throw new Error('未知操作');
       } else if (a.method === 'dev/state') {
-        await getAgent(sid);
+        if (!ctx.sessions.get(sid)) await getAgent(sid);
         const p = s.view(sid).plan;
-        result = { plan: p, sessions: [{ id: 'taskflow-dev-main', title: p?.title ?? '主会话', parentId: null }, ...Object.values(p?.tasks ?? {}).filter(t => t.mode === 'delegate' && t.executionSessionId).map(t => ({ id: t.executionSessionId, title: `${t.id} ${t.title}`, parentId: t.parentId ? p.tasks[t.parentId].executionSessionId || p.rootSessionId : p.rootSessionId }))], messages: messages(sid) };
+        const flatten = nodes => nodes.flatMap(t => [{ id: t.executionSessionId, title: `${t.id} ${t.title}`, parentId: t.target.parentSessionId, record: t.target.mode === 'one-shot' }, ...flatten(t.children)]);
+        result = { plan: p, sessions: [{ id: 'taskflow-dev-main', title: p?.title ?? '主会话', parentId: null }, ...flatten(sessionTree(p))], messages: messages(sid) };
       } else if (a.method === 'dev/message') {
         const prompt = String(a.text ?? '').trim(); if (!prompt || prompt.length > 16000) throw new Error('消息为空或过长');
+        if (Object.values(s.view(sid).plan?.tasks ?? {}).some(t => t.recordSession?.id === sid)) throw new Error('此处为执行记录，请返回负责会话继续对话');
         const agent = await getAgent(sid); if (agent.isRunning) throw new Error('请等待当前执行结束');
         queues.set(sid, command(sid, prompt));
         agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: prompt }] })); result = { ok: true };

@@ -5,13 +5,24 @@ import { join } from 'node:path';
 import { FileStore, MemoryStore } from '../src/storage/task-store.mjs';
 import { TaskService } from '../src/domain/task-service.mjs';
 import { TaskRuntime } from '../src/application/task-runtime.mjs';
-import { visibleTree } from '../src/client/model.mjs';
+import { visibleTree, sessionTree } from '../src/client/model.mjs';
 
 const make = (options = {}) => new TaskService(new MemoryStore(), options);
 const plan = (s, tasks) => s.create('main', { title: '知识库升级', goal: '实现导入与检索', tasks });
 const task = (title, extra = {}) => ({ title, ...extra });
 const until = async (fn, timeout = 3000) => { const end = Date.now() + timeout; while (!fn()) { if (Date.now() > end) throw new Error('Condition timed out'); await new Promise(r => setTimeout(r, 5)); } };
 const finish = (s, sid, t, summary = '实际结果已保存') => s.settle(sid, t.id, t.attempt.id, t.version, { status: 'completed', summary });
+
+test('子会话最终结果未持久化时不通知父任务，重试保存成功后仅发送完成摘要', async () => {
+  const s = make(); await plan(s, [task('行内结果')]); const t = await s.start('main', 'T-001'); await finish(s, 'main', t, '最终结果');
+  const order = []; let durable = false;
+  const runtime = new TaskRuntime(s, { recordResult: async () => { order.push('save'); return durable; }, notify: async notice => { order.push('notify'); assert.equal(notice.report.summary, '最终结果'); return true; } });
+  try {
+    await runtime.deliver(); assert.deepEqual(order, ['save']); assert.equal(s.store.read().outbox[0].delivered, false);
+    durable = true; await runtime.deliver(); assert.deepEqual(order, ['save', 'save', 'notify']); assert.equal(s.store.read().outbox[0].delivered, true);
+    await runtime.deliver(); assert.equal(order.length, 3);
+  } finally { await runtime.dispose(); }
+});
 
 test('持久计划跨轮保持，不能被第二次规划覆盖', async () => {
   const s = make(); await plan(s, [task('分析'), task('实现')]); const initial = s.view('main');
@@ -51,14 +62,14 @@ test('完成即勾选，无父审批；通知事件幂等', async () => {
   assert.equal(s.view('main').plan.tasks[t.id].status, 'completed'); assert.equal(s.store.read().outbox.length, 1); assert.equal(s.store.read().outbox[0].targetSessionId, 'main');
 });
 test('增补已完成任务重新打开祖先，保留历史报告', async () => {
-  const s = make(); await plan(s, [task('父项', { ref: 'p' }), task('子项', { parentId: 'p' })]); let t = await s.start('main', 'T-002'); await finish(s, 'main', t); t = await s.start('main', 'T-001'); await finish(s, 'main', t);
+  const s = make(); await plan(s, [task('父项', { ref: 'p' }), task('子项', { parentId: 'p' })]); const parent = await s.start('main', 'T-001'); const t = await s.start('main', 'T-002'); await finish(s, 'main', t); await finish(s, 'main', parent);
   await s.add('main', [task('增补')], 'T-002'); const p = s.view('main').plan; assert.equal(p.tasks['T-001'].status, 'pending'); assert.equal(p.tasks['T-002'].status, 'pending'); assert.ok(p.tasks['T-001'].report); assert.equal(p.tasks['T-002'].version, 2);
 });
 test('未完成下级阻止父任务提前完成，失败与暂停不显示完成', async () => {
   const s = make(); await plan(s, [task('父项', { ref: 'p' }), task('子项', { parentId: 'p' })]); const t = await s.start('main', 'T-001'); await assert.rejects(finish(s, 'main', t), { code: 'children' }); assert.equal(s.view('main').plan.tasks[t.id].status, 'running');
 });
 test('取消整棵子树，保留历史并拦截迟到结果', async () => {
-  const s = make(); await plan(s, [task('父', { ref: 'p' }), task('子', { parentId: 'p' })]); const t = await s.start('main', 'T-002'); await s.cancel('main', 'T-001', 1); await assert.rejects(finish(s, 'main', t), { code: 'stale' }); assert.equal(Object.values(s.view('main').plan.tasks).filter(t => t.status === 'cancelled').length, 2);
+  const s = make(); await plan(s, [task('父', { ref: 'p' }), task('子', { parentId: 'p' })]); await s.start('main', 'T-001'); const t = await s.start('main', 'T-002'); await s.cancel('main', 'T-001', 1); await assert.rejects(finish(s, 'main', t), { code: 'stale' }); assert.equal(Object.values(s.view('main').plan.tasks).filter(t => t.status === 'cancelled').length, 2);
 });
 test('子会话只能改自己的子树，不能修改兄弟或主任务', async () => {
   const s = make(); const p = await plan(s, [task('委派', { mode: 'delegate' }), task('兄弟')]); const t = await s.start('main', 'T-001'); await s.bind(p.id, t.id, t.attempt.id, 'child');
@@ -74,7 +85,7 @@ test('工具默认关闭、按会话保存，拒绝非 HTTP 地址', async () =>
   await assert.rejects(s.openView('main', { kind: 'browser', url: 'javascript:alert(1)' }), { code: 'invalid' });
 });
 test('层级筛选保留祖先，没有分类或阶段分组', async () => {
-  const s = make(); await plan(s, [task('父', { ref: 'p' }), task('子', { parentId: 'p' })]); const t = await s.start('main', 'T-002'); await finish(s, 'main', t); const tree = visibleTree(s.view('main').plan, { filter: 'completed' }); assert.equal(tree[0].id, 'T-001'); assert.equal(tree[0].children[0].id, 'T-002');
+  const s = make(); await plan(s, [task('父', { ref: 'p' }), task('子', { parentId: 'p' })]); await s.start('main', 'T-001'); const t = await s.start('main', 'T-002'); await finish(s, 'main', t); const tree = visibleTree(s.view('main').plan, { filter: 'completed' }); assert.equal(tree[0].id, 'T-001'); assert.equal(tree[0].children[0].id, 'T-002');
 });
 test('文件账本冷恢复保留 ID 与通知；不重复自动启动中断执行', async () => {
   await mkdir('.local/tests', { recursive: true }); const dir = await mkdtemp(join(process.cwd(), '.local/tests/store-'));
@@ -140,4 +151,30 @@ test('同级排序保持稳定 ID、版本和执行状态，拒绝过期排序',
 test('不能在委派父任务尚未执行时将孙任务偷挂到主会话', async () => {
   const s = make(); await plan(s, [task('父', { ref: 'p', mode: 'delegate' }), task('孙', { parentId: 'p', mode: 'delegate' })]);
   await assert.rejects(s.start('main', 'T-002'), { code: 'owner' }); assert.equal(s.view('main').plan.tasks['T-002'].status, 'pending');
+});
+
+
+test('旧计划中的高复杂度独立事项在启动时委派，深度上限仍行内执行', async () => {
+  const s = make(); await plan(s, [task('复杂', { complexity: 'high', independent: true, mode: 'inline' })]);
+  assert.equal(s.view('main').plan.tasks['T-001'].mode, 'delegate');
+  await s.store.transaction(state => { state.plans[state.sessions.main].tasks['T-001'].mode = 'inline'; });
+  assert.equal((await s.start('main', 'T-001')).mode, 'delegate');
+  const capped = make({ maxDepth: 0 }); await plan(capped, [task('复杂', { complexity: 'high', independent: true })]);
+  const result = await capped.start('main', 'T-001'); assert.equal(result.mode, 'inline'); assert.match(result.executionReason, /深度上限/);
+});
+test('会话树只展示已创建的会话，重试保留真实历史父子地址', async () => {
+  const s = make(); const p = await plan(s, [task('父', { ref: 'p', mode: 'delegate' }), task('孙', { parentId: 'p', mode: 'delegate' })]);
+  let parent = await s.start('main', 'T-001'); await s.bind(p.id, parent.id, parent.attempt.id, 'old-child');
+  assert.equal(sessionTree(s.view('main').plan).length, 0, '预留 ID 尚未成功激活时不显示假会话');
+  await s.activationReady(p.id, parent.id, parent.attempt.id);
+  const grand = await s.start('old-child', 'T-002'); await s.bind(p.id, grand.id, grand.attempt.id, 'old-grand'); await s.activationReady(p.id, grand.id, grand.attempt.id);
+  await s.settle('old-grand', grand.id, grand.attempt.id, grand.version, { status: 'blocked', summary: '缺少输入' }, true);
+  await s.settle('old-child', parent.id, parent.attempt.id, parent.version, { status: 'blocked', summary: '等待下级输入' }, true);
+  parent = await s.start('main', parent.id); await s.bind(p.id, parent.id, parent.attempt.id, 'new-child'); await s.activationReady(p.id, parent.id, parent.attempt.id);
+  const tree = sessionTree(s.view('main').plan), old = tree.find(t => t.executionSessionId === 'old-child');
+  assert.equal(tree.length, 2); assert.equal(old.children[0].executionSessionId, 'old-grand'); assert.equal(old.children[0].target.parentSessionId, 'old-child');
+  const retry = await s.start('new-child', 'T-002'); await s.bind(p.id, retry.id, retry.attempt.id, 'new-grand'); await s.activationReady(p.id, retry.id, retry.attempt.id);
+  const latest = sessionTree(s.view('main').plan);
+  assert.equal(latest.find(t => t.executionSessionId === 'old-child').children[0].executionSessionId, 'old-grand');
+  assert.equal(latest.find(t => t.executionSessionId === 'new-child').children[0].executionSessionId, 'new-grand');
 });
