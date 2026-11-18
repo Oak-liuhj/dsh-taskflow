@@ -1,14 +1,14 @@
 # npm 与插件市场正式发布
 
-本文件说明发布和市场收录流程。**0.1.3 已于 2026-11-18 发布到 npm，`latest` 为 0.1.3**，匿名下载及独立生产安装已核验。后续 npm 发布须递增版本号，不能覆盖 0.1.3。npm、GitHub 标签、可选的 GitHub Release 附件和插件市场收录分别核验。
+本文件说明发布和市场收录流程。**0.1.4 已于 2026-11-18 发布到 npm，`latest` 为 0.1.4**，匿名下载、独立生产安装和注册表包的真实 AgentLoop 测试已核验。后续 npm 发布须递增版本号，不能覆盖已发布版本。npm、GitHub 标签、可选的 GitHub Release 附件和插件市场收录分别核验。
 
 dsh-market 本身是市场应用，[官方投稿说明](https://github.com/dsh-market/dsh-market#submit-your-plugin)要求向 `awesome-dsh-plugin/awesome-dsh-plugin` 提交目录条目；不向市场应用仓库 PR 插件条目。当前申请与检查见 [SUBMISSION.md](../marketplace/SUBMISSION.md)。
 
-当前源码候选版为 **0.1.4（未发布）**，用于子任务执行记录展示修复；本地构建、验证和安装不代表 npm 或市场条目已更新。
+0.1.4 的发布代码为 `61740612507aee65656dc016f0e9ed470d5cfa92`，标签为 `v0.1.4`，Windows/Ubuntu CI 均通过。市场申请仍为 [#16424](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/16424)，已更新功能描述和发布验证记录；PR 提交、合并和市场刷新分别核验。
 
 ## 版本和兼容性
 
-- npm 已发布版本：`0.1.3`；npm 发布标签：`latest`。源码候选版本：`0.1.4`。
+- npm 已发布版本：`0.1.4`；npm 发布标签：`latest`。
 - 宿主要求：`>=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0`。
 - `engines.dsh` 与必需 DSH peer 范围一致；开发依赖保持 `0.2.2-rc.2` 基线。
 - DSH 检查采用 `includePrerelease: true`；`∩` 只用于解释范围交集，不得写入 SemVer 字段。
@@ -37,7 +37,7 @@ npm run check:hosts
 ## 发布步骤
 
 1. 审查差异与验收记录，同步源码、锁文件、构建产物、文档、许可和素材。将完整代码推送 GitHub，确认远端 CI 通过，添加 `dsh-plugin` topic。
-2. 后续发布先在 package.json、锁文件及文档中递增版本，查询官方 registry 确认该版本未占用，再检查本机 npm 登录与发布权限。凭据及验证码不进入仓库或日志。以下以 `$taskflowVersion` 指代这次待发布的新版本，勿对已发布的 0.1.3 重复执行。
+2. 后续发布先在 package.json、锁文件及文档中递增版本，查询官方 registry 确认该版本未占用，再检查本机 npm 登录与发布权限。凭据及验证码不进入仓库或日志。以下以 `$taskflowVersion` 指代这次待发布的新版本，勿对已发布的 0.1.4 重复执行。
 3. 使用已经通过安装验证的同一个 tgz 发布：
 
    ```powershell
@@ -58,7 +58,7 @@ npm run check:hosts
 通过注册表包名安装后，宿主插件详情的“重新检查”查询新版本，“更新”安装指定兼容版本。也可执行：
 
 ```sh
-dsh plugin --profile web add dsh-taskflow@0.1.3
+dsh plugin --profile web add dsh-taskflow@0.1.4
 ```
 
 将 `web` 替换为实际 profile。Git、本地目录及 tgz 安装不使用宿主的 npm 注册表更新列表，应手动安装新来源。不要通过版本豁免强行跳过未满足的宿主要求。
