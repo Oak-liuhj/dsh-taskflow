@@ -11,7 +11,9 @@
 - npm：[`dsh-taskflow@0.1.3`](https://www.npmjs.com/package/dsh-taskflow/v/0.1.3) 已发布，`latest` 指向 0.1.3，独立生产安装和运行检查通过。
 - 已发布代码：[`71e2d09`](https://github.com/Oak-liuhj/dsh-taskflow/commit/71e2d091eb582f3c48768af3e7dafc00d06e190b)，标签 [`v0.1.3`](https://github.com/Oak-liuhj/dsh-taskflow/tree/v0.1.3)。[Windows / Ubuntu CI](https://github.com/Oak-liuhj/dsh-taskflow/actions/runs/44059139196) 通过。
 - 本次调整市场资料、安装说明和截图格式检查；npm 0.1.3 的运行代码与已发布包保持对应，不重发已有版本。
-- 目录 PR：准备提交。合并、目录刷新、实际搜索和安装入口需分别确认；当前不宣称市场已收录。
+- 目录 PR：[#16424 — Add Oak-liuhj/dsh-taskflow](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/16424)，已提交，等待维护者审核。仅新增自己的 YAML；合并、目录刷新、实际搜索和安装入口需分别确认，当前不宣称市场已收录。
+- 市场准备提交：[`773f45d`](https://github.com/Oak-liuhj/dsh-taskflow/commit/773f45d0cc4db9aaf8b03881ea75c62f63937bf5)。修正历史截图的实际 PNG 编码并补充格式校验；图标与 5 张声明截图均通过 GitHub 下载和本地字节核对。
+- 投稿前校验：目录仓库原生 `check-submission.mjs` 检查 1 条并通过，`validateEntries` 在包含新条目的 11,745 条目录上通过。本项目 `npm run check` 通过 65 项测试及 12 项版本边界；PR 的远端校验以 GitHub 检查页为准。
 
 ## 规范核对
 
