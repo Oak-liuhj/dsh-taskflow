@@ -20,7 +20,7 @@
 
 ![任务导航与会话](https://raw.githubusercontent.com/Oak-liuhj/dsh-taskflow/main/docs/screenshots/desktop.png)
 
-*截图来自固定响应模型的开发验收环境。*
+*历史开发验收截图（0.1.0-alpha.1），使用固定响应模型，用于说明布局；不是 0.1.3 完整宿主截图。当前版本功能与验证范围见下方指南及[验收记录](docs/acceptance.md)。*
 
 ## 安装 / 更新
 
@@ -30,13 +30,19 @@
 
 安装后按宿主提示重载对应 profile。插件需要宿主提供模型、工具与 `spawn` 子会话能力；桌面端需提供相同的 Web 渲染层服务。
 
+### 通过 dsh-market 发现
+
+[dsh-market](https://github.com/dsh-market/dsh-market) 从 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 目录同步插件。收录申请、维护者合并和市场刷新是三个阶段，提交 PR 不代表已经可搜索；[投稿记录](marketplace/SUBMISSION.md) 单独记录状态。
+
+目录收录并刷新后，在 **插件 → 插件市场** 搜索 `dsh-taskflow`，确认仓库为 `Oak-liuhj/dsh-taskflow`、npm 包名为 `dsh-taskflow`，并检查显示的 DSH 兼容要求后安装。若宿主使用 **发现 → 索引来源**，可添加市场提供的 `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`。搜索暂不可用时，已发布的 npm 包仍可直接安装。
+
 ### 使用 `dsh` CLI 安装或更新
 
 ```sh
 dsh plugin --profile web add dsh-taskflow@latest
 ```
 
-桌面版将 profile 换成 `desktop`：
+官方桌面版优先使用应用内插件管理器。只有确认当前桌面宿主实际使用 `desktop` profile 时，才使用以下命令：
 
 ```sh
 dsh plugin --profile desktop add dsh-taskflow@latest

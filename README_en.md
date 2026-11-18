@@ -36,7 +36,7 @@ The tool view keeps a compact header and fills its remaining height with documen
 
 ![Task navigation and conversation](https://raw.githubusercontent.com/Oak-liuhj/dsh-taskflow/main/docs/screenshots/desktop.png)
 
-*Screenshots show the development acceptance shell with a deterministic model.*
+*Historical development-shell screenshots (0.1.0-alpha.1), using a deterministic model to illustrate the layout. These are not full-host screenshots of 0.1.3. See the guide and [acceptance record](docs/acceptance.md) for the current behavior and validation scope.*
 
 ## Install / Update
 
@@ -45,6 +45,14 @@ The tool view keeps a compact header and fills its remaining height with documen
 Open **Plugins** → **Add plugin** and search for `dsh-taskflow`. If a result points to `Oak-liuhj/dsh-taskflow`, install that entry. If it is not listed, use the CLI below to install by npm package name.
 
 Reload the profile when the host requests it. The plugin uses the host's model, tools and `spawn` subagent provider. Desktop installations need the same Web renderer services.
+
+### Discover through dsh-market
+
+[dsh-market](https://github.com/dsh-market/dsh-market) consumes the [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) catalog. Submission, maintainer merge and market refresh are separate stages; a pull request does not establish searchability. The [submission record](marketplace/SUBMISSION.md) tracks that status.
+
+After catalog inclusion and refresh, search for `dsh-taskflow` under **Plugins → Plugin Market**. Confirm the repository is `Oak-liuhj/dsh-taskflow`, the npm package is `dsh-taskflow`, and the host requirement is compatible. For the host's **Discover → Index sources**, the market provides `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`. The published npm package remains directly installable before the catalog refreshes.
+
+On official Desktop, prefer the app's plugin manager. CLI installation must target the profile actually used by that app; installing into `web` does not install into Desktop.
 
 ### Using the `dsh` CLI
 

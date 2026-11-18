@@ -87,7 +87,12 @@ export async function checkRelease(root = project) {
   assert.equal(market.icon,'https://raw.githubusercontent.com/Oak-liuhj/dsh-taskflow/main/assets/icon.png');
   const screenshots = await json(join(root,'screenshots.json'));
   assert.ok(screenshots.length >= 1 && screenshots.length <= 8);
-  for (const path of screenshots) { assert.match(path,/^docs\/screenshots\/[\w-]+\.png$/); await readFile(join(root,path)); }
+  for (const path of screenshots) {
+    assert.match(path,/^docs\/screenshots\/[\w-]+\.png$/);
+    const image = await readFile(join(root,path));
+    assert.equal(image.subarray(0,8).toString('hex'),'89504e470d0a1a0a', `Screenshot must contain PNG data: ${path}`);
+    assert.ok(image.length >= 24 && image.readUInt32BE(16) > 0 && image.readUInt32BE(20) > 0, `Screenshot dimensions: ${path}`);
+  }
   const readme = await readFile(join(root,'README.md'),'utf8'); assert.ok(readme.includes(pkg.version)); assert.ok(readme.includes(pkg.engines.dsh), 'README must include the declared host range'); assert.doesNotMatch(readme,/file:\/\/\/|[A-Z]:\\|Users\/Administrator/);
   assert.ok(!pkg.files.some(p=>['src','docs','scripts','test','.local','docs/screenshots','docs/prototype'].includes(p.replace(/\/$/,''))), 'Runtime package must use an explicit allowlist');
   return { ...result, runtimeImports:[...runtimeImports],screenshots:screenshots.length };
