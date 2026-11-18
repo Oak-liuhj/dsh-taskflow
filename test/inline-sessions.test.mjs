@@ -10,6 +10,7 @@ import { TaskService } from '../src/domain/task-service.mjs';
 import { MemoryStore } from '../src/storage/task-store.mjs';
 import { InlineSessions } from '../src/server/inline-sessions.mjs';
 import { registerTools } from '../src/server/tools.mjs';
+import { createAssistantMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm';
 const model = process.env.TASKFLOW_TEST_PLUGIN ? null : await import('../src/client/model.mjs');
 
 test('进展和关键结果进入当前事项子会话，迟到工具结果不串到下一项，完成摘要先保存', async () => {
@@ -26,12 +27,19 @@ test('进展和关键结果进入当前事项子会话，迟到工具结果不�
     assert.equal(progress.taskId, first.id); assert.notEqual(progress.sessionId, 'parent');
     assert.match(JSON.stringify(ctx.sessions.get(progress.sessionId).snapshotEvents()), /已完成目录勘察/);
     assert.doesNotMatch(JSON.stringify(parent.session.snapshotEvents()), /已完成目录勘察/); assert.equal(service.store.read().outbox.length, 0);
-    records.capture(parent.session, { type: 'tool/call', seq: 5000, data: { name: 'read_file', callId: 'slow-read', arguments: '{"path":"one.md"}' } });
+    records.capture(parent.session, { type: 'request/header', seq: 4997, data: { step: 2, header: { config: { provider: 'fixture', model: 'task-journal' } } } });
+    records.capture(parent.session, { type: 'assistant/message', seq: 4998, data: { message: createAssistantMessage({ source: { provider: 'fixture', model: 'task-journal' }, content: [{ type: 'reasoning', text: 'PRIVATE_REASONING_NOT_A_PROGRESS_RECORD' }, { type: 'text', text: '已确认两个入口，下一步检查导入校验。' }] }) } });
+    records.capture(parent.session, { type: 'tool/call', seq: 5000, time: 1000, data: { name: 'read_file', callId: 'slow-read', arguments: '{"path":"one.md"}' } });
     await service.settle('parent', first.id, first.attempt.id, first.version, { status: 'completed', summary: '第一项完成' });
     await service.start('parent', 'T-002');
-    records.capture(parent.session, { type: 'tool/result', seq: 5001, data: { message: { toolCallId: 'slow-read', content: [{ type: 'text', text: '第一项的关键读取结果' }] } } });
+    records.capture(parent.session, { type: 'tool/result', seq: 5001, time: 2300, data: { message: { toolCallId: 'slow-read', content: [{ type: 'text', text: '第一项的关键读取结果' }] } } });
     await records.idle();
     assert.match(JSON.stringify(ctx.sessions.get(progress.sessionId).snapshotEvents()), /第一项的关键读取结果/);
+    const messages = ctx.sessions.get(progress.sessionId).snapshotEvents().filter(e => e.type === 'user/message').map(e => e.data);
+    for (const category of ['model-call', 'model-output', 'tool-call', 'tool-result', 'progress']) assert.ok(messages.some(m => m.source.record?.category === category), `Missing readable record kind: ${category}`);
+    const output = messages.find(m => m.source.record?.category === 'model-output'); assert.match(output.content[0].text, /已确认两个入口/); assert.deepEqual(output.source.record.model, { provider: 'fixture', model: 'task-journal' });
+    assert.doesNotMatch(JSON.stringify(messages), /PRIVATE_REASONING_NOT_A_PROGRESS_RECORD/);
+    const toolResult = messages.find(m => m.source.record?.category === 'tool-result'); assert.equal(toolResult.source.record.tool, 'read_file'); assert.equal(toolResult.source.record.durationMs, 1300);
     const second = service.view('parent').plan.tasks['T-002']; assert.doesNotMatch(JSON.stringify(ctx.sessions.get(second.recordSession.id).snapshotEvents()), /第一项的关键读取结果/);
     await assert.rejects(tools.get('taskflow_progress').execute({ taskId: 'T-001', content: '不能冒充其他任务' }, { agent: { session: parent.session }, signal: new AbortController().signal, callId: 'wrong' }), /当前正在执行/);
     await service.add('parent', [{ title: '嵌套行内子项' }], second.id);
@@ -146,4 +154,71 @@ test('记录保存失败不伪造已创建、不改变完成结果；重试复�
     const done = service.view('parent').plan.tasks[t.id]; assert.equal(done.recordSession.id, failed.recordSession.id); assert.equal(done.recordSession.created, true); assert.equal(done.recordError, undefined); assert.deepEqual(done.report, failed.report);
     assert.equal((await ctx.sessionPersistence.list()).length, 2);
   } finally { if (originalFlush) ctx.sessions.flush = originalFlush; await records?.dispose(); await ctx.fiber.dispose(); }
+});
+
+test('真实事件自动落盘，失败工具与多行阶段结果冷读取保留，重复事件不重复写入', async () => {
+  await mkdir('.local/tests', { recursive: true }); const dir = await mkdtemp(join(process.cwd(), '.local/tests/journal-durability-'));
+  const store = new MemoryStore(), service = new TaskService(store), errors = [];
+  let recordId, firstMessages;
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const ctx = new Context(); let records;
+    try {
+      await mountAgentLoopTestDependencies(ctx, { workingDirectory: true }); await ctx.plugin(Jsonl, { root: dir, compression: 'none' }); await ctx.plugin(Subagents, {});
+      records = new InlineSessions(ctx, service, e => errors.push(e));
+      if (!cycle) {
+        const parent = await records.acquire('parent', { cwd: process.cwd() });
+        await service.create('parent', { title: '落盘验证', goal: '真实记录重启后仍可读', tasks: [{ title: '校验导入入口' }] });
+        await service.start('parent', 'T-001');
+        parent.session.append('turn/start', { turn: 1 }); parent.session.append('step/start', { turn: 1, step: 1 });
+        parent.session.append('request/header', { reason: 'initial', header: { config: { provider: 'fixture', model: 'durability' } } });
+        parent.session.append('assistant/message', { turn: 1, step: 1, stream: [], message: createAssistantMessage({ source: { provider: 'fixture', model: 'durability' }, content: [{ type: 'text', text: '已定位导入入口，正在验证异常输入。' }, { type: 'tool-call', id: 'validation', name: 'validate_import', arguments: '{"file":"sample.csv"}' }] }) }, { surfaceOp: 'append' });
+        parent.session.append('tool/call', { turn: 1, step: 1, name: 'validate_import', callId: 'validation', arguments: '{"file":"sample.csv"}' });
+        parent.session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({ callId: 'validation', isError: true, content: [{ type: 'text', text: '{"error":"缺少必填列","missing":["title"]}' }] }) }, { surfaceOp: 'append' });
+        const toolResult = parent.session.snapshotEvents().find(e => e.type === 'tool/result');
+        records.capture(parent.session, toolResult); // Same source event redelivery is idempotent.
+        parent.session.append('step/end', { turn: 1, step: 1 }); parent.session.append('turn/end', { turn: 1, reason: 'completed' });
+        await records.progress('parent', 'T-001', '## 验证结果\n\n| 样本 | 结果 |\n| --- | --- |\n| sample.csv | 缺少 title |\n\n下一步：补齐必填列后重试。', 'stage-validation');
+        await records.idle(); recordId = service.view('parent').plan.tasks['T-001'].recordSession.id;
+        firstMessages = ctx.sessions.get(recordId).snapshotEvents().filter(e => e.type === 'user/message').map(e => e.data);
+        assert.equal(firstMessages.filter(m => m.source.record?.originSeq === toolResult.seq && m.source.record?.category === 'tool-result').length, 1);
+        const modelCall = firstMessages.find(m => m.source.record?.category === 'model-call');
+        assert.match(modelCall.content[0].text, /第 1 步模型调用/); assert.doesNotMatch(JSON.stringify(firstMessages), /undefined/);
+        const failure = firstMessages.find(m => m.source.record?.category === 'tool-result');
+        assert.equal(failure.source.record.status, 'failed'); assert.equal(failure.source.record.tool, 'validate_import'); assert.ok(failure.source.record.durationMs >= 0);
+        assert.equal(store.read().outbox.length, 0); assert.equal(ctx.agents.list().length, 0, '记录不额外创建模型执行');
+        await parent.release();
+      } else {
+        const persisted = await ctx.sessionPersistence.open(recordId, 'read');
+        let messages;
+        try { messages = (await persisted.read()).events.filter(e => e.type === 'user/message').map(e => e.data); } finally { await persisted.close(); }
+        assert.deepEqual(messages, firstMessages, '冷读取不丢正文或模型/工具元数据');
+        assert.match(JSON.stringify(messages), /下一步：补齐必填列后重试/);
+        records.kick(); await records.idle(); assert.deepEqual(errors, []);
+        assert.deepEqual(ctx.sessions.get(recordId).snapshotEvents().filter(e => e.type === 'user/message').map(e => e.data), firstMessages, '恢复不重复写入');
+      }
+    } finally { await records?.dispose(); await ctx.fiber.dispose(); }
+  }
+  assert.deepEqual(errors, []);
+});
+
+test('任务要求变更后迟到工具结果不会污染新执行，非法进展拒绝且新尝试可继续', async () => {
+  await mkdir('.local/tests', { recursive: true }); const dir = await mkdtemp(join(process.cwd(), '.local/tests/journal-stale-'));
+  const ctx = new Context(), service = new TaskService(new MemoryStore()), errors = []; let records;
+  try {
+    await mountAgentLoopTestDependencies(ctx, { workingDirectory: true }); await ctx.plugin(Jsonl, { root: dir, compression: 'none' }); await ctx.plugin(Subagents, {});
+    records = new InlineSessions(ctx, service, e => errors.push(e));
+    const parent = await records.acquire('parent', { cwd: process.cwd() });
+    await service.create('parent', { title: '版本隔离', goal: '不混入旧执行结果', tasks: [{ title: '验证事项' }] });
+    const old = await service.start('parent', 'T-001'); await records.idle();
+    parent.session.append('tool/call', { name: 'read_file', callId: 'stale', arguments: '{"path":"old.md"}' }); await records.idle();
+    await service.update('parent', old.id, { instructions: '使用新版文档' }, old.version);
+    const live = await service.start('parent', old.id);
+    parent.session.append('tool/result', { message: createToolResultMessage({ callId: 'stale', isError: false, content: [{ type: 'text', text: 'STALE_RESULT_MUST_NOT_ENTER_NEW_ATTEMPT' }] }) }, { surfaceOp: 'append' });
+    for (const content of ['', '   ', 'x'.repeat(16001)]) assert.throws(() => records.progress('parent', live.id, content, 'invalid'), /非空文本/);
+    await records.progress('parent', live.id, '新版文档校验完成：共 3 项通过。', 'current'); await records.idle();
+    const task = service.view('parent').plan.tasks[live.id], messages = JSON.stringify(ctx.sessions.get(task.recordSession.id).snapshotEvents());
+    assert.doesNotMatch(messages, /STALE_RESULT_MUST_NOT_ENTER_NEW_ATTEMPT/); assert.match(messages, /新版文档校验完成/);
+    assert.equal(task.version, old.version + 1); assert.equal(task.attempts, 2); assert.deepEqual(errors, []);
+    await parent.release();
+  } finally { await records?.dispose(); await ctx.fiber.dispose(); }
 });

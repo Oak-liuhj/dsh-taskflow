@@ -6,6 +6,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import semver from 'semver';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 // Each fixture installs the packed plugin and a complete, exact host baseline.
 // Its tests resolve dependencies there, never through the source checkout.
@@ -15,7 +17,7 @@ const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 const archive = resolve('dist', `${pkg.name}-${pkg.version}.tgz`);
 const archiveSha256 = createHash('sha256').update(await readFile(archive)).digest('hex');
 const versions = process.env.TASKFLOW_HOST_VERSIONS?.split(',').map(v => v.trim()).filter(Boolean) ?? ['0.2.1-rc.3', '0.2.2-rc.2', '0.2.2-rc.3'];
-const hostNames = Object.keys(pkg.devDependencies).filter(name => name.startsWith('@deepseek-ai/dsh-') && (!name.startsWith('@deepseek-ai/dsh-client-') || name === '@deepseek-ai/dsh-client-connection'));
+const hostNames = Object.keys(pkg.devDependencies).filter(name => name.startsWith('@deepseek-ai/dsh-') && (!name.startsWith('@deepseek-ai/dsh-client-') || ['@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-client-ui-slots'].includes(name)));
 const cache = resolve('.local/npm-cache'), results = [];
 for (const version of versions) {
   assert.ok(semver.valid(version) && semver.satisfies(version, pkg.engines.dsh, { includePrerelease: true }), `Unsupported fixture: ${version}`);
@@ -56,7 +58,9 @@ for (const version of versions) {
     await writeFile(join(fixture, 'test/quick-replies.test.mjs'), repliesTest);
     const plugin = join(fixture, 'node_modules', pkg.name, 'index.js');
     const { stdout } = await run(process.execPath, ['--test', 'test/host.test.mjs', 'test/rpc-http.test.mjs', 'test/inline-sessions.test.mjs', 'test/tool-views.test.mjs', 'test/quick-replies.test.mjs'], { cwd: fixture, env: { ...process.env, TASKFLOW_TEST_PLUGIN: plugin, TASKFLOW_TEST_RPC: join(fixture, 'node_modules', pkg.name, 'src/server/rpc.mjs') }, maxBuffer: 8 * 1024 * 1024, timeout: 60000 });
-    results.push({ version, passed: true, dependencies, output: stdout });
+    const slotsPath = createRequire(join(fixture, 'package.json')).resolve('@deepseek-ai/dsh-client-ui-slots');
+    const { stdout: clientOutput } = await run(process.execPath, ['--test', 'test/execution-record.test.mjs'], { cwd: root, env: { ...process.env, TASKFLOW_TEST_SLOTS: pathToFileURL(slotsPath).href, TASKFLOW_TEST_CLIENT: join(fixture, 'node_modules', pkg.name, 'client.js') }, maxBuffer: 8 * 1024 * 1024, timeout: 60000 });
+    results.push({ version, passed: true, dependencies, output: stdout, clientOutput });
     console.log(`Host ${version}: passed`);
   } catch (error) {
     results.push({ version, passed: false, output: `${error.message}\n${error.stdout ?? ''}\n${error.stderr ?? ''}` });
@@ -68,5 +72,5 @@ for (const version of versions) {
   }
 }
 await mkdir(join(root, 'dist'), { recursive: true });
-await writeFile('dist/host-report.json', JSON.stringify({ pluginVersion: pkg.version, declaredRange: pkg.engines.dsh, archiveSha256, scope: 'Packed server plugin with exact host dependencies and deterministic AgentLoop model, plus real authenticated Connection HTTP RPC; excludes full UI and production providers', results }, null, 2) + '\n');
+await writeFile('dist/host-report.json', JSON.stringify({ pluginVersion: pkg.version, declaredRange: pkg.engines.dsh, archiveSha256, scope: 'Packed server plugin with exact host dependencies and deterministic AgentLoop model, real authenticated Connection HTTP RPC, and execution-record JSDOM rendering with exact native SlotCore; excludes full UI and production providers', results }, null, 2) + '\n');
 if (results.some(result => !result.passed)) process.exitCode = 1;

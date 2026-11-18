@@ -20,7 +20,7 @@
 
 ![任务导航与会话](https://raw.githubusercontent.com/Oak-liuhj/dsh-taskflow/main/docs/screenshots/desktop.png)
 
-*历史开发验收截图（0.1.0-alpha.1），使用固定响应模型，用于说明布局；不是 0.1.3 完整宿主截图。当前版本功能与验证范围见下方指南及[验收记录](docs/acceptance.md)。*
+*历史开发验收截图（0.1.0-alpha.1），使用固定响应模型，用于说明布局；不是当前版本的完整宿主截图。当前版本功能与验证范围见下方指南及[验收记录](docs/acceptance.md)。*
 
 ## 安装 / 更新
 
@@ -52,13 +52,13 @@ dsh plugin --profile desktop add dsh-taskflow@latest
 
 ### 安装指定版本或本地构建
 
-下方使用指南对应 **0.1.3**，包含自动规划、递归子会话、工具插件预览、清单拖宽和推荐回复加载提示。需要固定版本时，执行 `dsh plugin --profile desktop add dsh-taskflow@0.1.3`。安装前可查询 registry 当前版本：
+本说明对应 **0.1.4**，包含自动规划、递归子会话、工具插件预览、清单拖宽、推荐回复加载提示，以及默认展开的分类执行记录。固定该版本时，执行 `dsh plugin --profile desktop add dsh-taskflow@0.1.4`。安装前可查询 registry 当前版本：
 
 ```sh
 npm view dsh-taskflow version dist-tags --json
 ```
 
-已有 0.1.3 修复版 `.tgz` 时，在压缩包所在目录执行 `dsh plugin --profile desktop add ./dsh-taskflow-0.1.3.tgz`；安装后保存工作并重启 DSH。已经安装本地修复包的用户可直接进入下方使用指南。
+已有 0.1.4 安装包 `.tgz` 时，在压缩包所在目录执行 `dsh plugin --profile desktop add ./dsh-taskflow-0.1.4.tgz`；安装后保存工作并重启 DSH。已经安装该版本的用户可直接进入下方使用指南。
 
 需要自行打包时，在**包含上述修复的源码目录**执行：
 
@@ -67,10 +67,10 @@ npm ci
 npm run build
 npm run check
 npm run check:package
-dsh plugin --profile desktop add ./dist/dsh-taskflow-0.1.3.tgz
+dsh plugin --profile desktop add ./dist/dsh-taskflow-0.1.4.tgz
 ```
 
-这些命令需要 Node.js ≥24.9.0；`check:package` 会生成并验证 `dist/dsh-taskflow-0.1.3.tgz`。`dsh` 指你当前宿主提供的 CLI；如果终端找不到该命令，请使用宿主 CLI 的实际路径。网页版将 `desktop` 换成 `web`。本地安装不等于发布到 npm，也不会自动更新其他 profile。
+这些命令需要 Node.js ≥24.9.0；`check:package` 会生成并验证 `dist/dsh-taskflow-0.1.4.tgz`。`dsh` 指你当前宿主提供的 CLI；如果终端找不到该命令，请使用宿主 CLI 的实际路径。安装后保存工作并重启 DSH。网页版将 `desktop` 换成 `web`。本地安装不等于发布到 npm，也不会自动更新其他 profile。
 
 ## 使用指南
 
@@ -243,6 +243,8 @@ dsh plugin --profile desktop add ./dist/dsh-taskflow-0.1.3.tgz
 
 子任务的执行过程和关键发现保留在当前子任务会话。模型通过 `taskflow_progress` 保存阶段进展：委派事项直接写入执行子会话，行内事项写入对应记录子会话。实际工具过程自动保存；迟到结果按原工具调用归属记录。最终结果先保存到子任务，再由完成通知告诉直接父任务，过程不逐条通知父任务。
 
+**0.1.4** 将这些记录默认展开，显示步骤目标、实际操作、关键发现或验证结果、下一步及阻塞原因。行内记录自动区分模型调用、模型公开输出、工具调用参数与返回结果；原始记录提供模型、工具、耗时或失败状态时一并展示。内容支持 Markdown、表格和代码，可手动折叠。旧版“上下文注入 · taskflow · T-xxx 执行过程”记录也能直接阅读，无需重新执行任务；历史缺失的内容不会凭空补写。
+
 文件来自工具的明确路径字段，不从命令或普通回复猜测。若通过终端脚本生成文档，要求模型随后调用 `taskflow_open_view`，传入 `kind: "editor"` 和真实 `filePath`（多文件用 `files`）；不要只在回复里写路径。文档读取、权限检查、渲染和加载错误由宿主预览插件负责，Taskflow 不再直接读取文件。请启用宿主文档预览插件；缺失时显示原因，可在启用后点击“重试打开”。
 
 浏览器自动化、终端和编辑仍由原工具或对应插件执行。宿主浏览器打开的是相同地址；第三方自动化插件的浏览器不一定与它共享登录、页面进度或标签页，打开视图不代表完成操作。识别到的文档统一交给宿主预览；其他工具可展示插件注册的专用视图。
@@ -324,10 +326,10 @@ T-003 需要的样例文件已放在项目 fixtures/sample.json，请沿用原�
 
 ## 注意事项
 
-- **兼容性** — 当前版本 **0.1.3**，要求 Node.js **≥24.9.0**；DSH 兼容声明为 `>=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0`。宿主需启用 `tools`、`agents`、`sessions`、`systemPrompt`、`subagents` 及相应客户端服务。
+- **兼容性** — 当前版本 **0.1.4**，要求 Node.js **≥24.9.0**；DSH 兼容声明为 `>=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0`。宿主需启用 `tools`、`agents`、`sessions`、`systemPrompt`、`subagents` 及相应客户端服务。
 - **规划与执行** — 自动规划由模型提示引导，具体拆解和工具选择取决于宿主模型。任务账本独立于 `todo_write`，后续对话通过增量操作维护原计划。
 - **数据与恢复** — 同一 `dataDir` 只允许一个活跃写入者。停止宿主后备份整个目录；完整迁移还需备份原生 DSH 会话。中断时仍在执行的任务恢复为暂停，从负责会话继续；卸载插件保留账本数据。
-- **验证范围** — 当前 0.1.3 修复版已通过 65 项自动化测试、12 个版本边界检查，以及 `0.2.1-rc.3`、`0.2.2-rc.2`、`0.2.2-rc.3` 的固定响应模型集成测试。推荐请求另经当前真实模型验证；完整原生界面、真实模型的任务拆解质量与第三方工具仍需验收，详见[验收记录](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/docs/acceptance.md)。
+- **验证范围** — 0.1.4 通过 71 项自动化测试、12 个版本边界检查，以及 `0.2.1-rc.3`、`0.2.2-rc.2`、`0.2.2-rc.3` 的固定响应模型集成测试；执行记录另经这三个版本的原生 SlotCore 与实际打包客户端 jsdom 回归，覆盖冷读取与重复启停。推荐请求此前经真实模型验证；完整原生界面、真实模型的任务拆解质量与第三方工具仍需验收，详见[验收记录](https://github.com/Oak-liuhj/dsh-taskflow/blob/main/docs/acceptance.md)。
 - **语言** — 插件说明提供简体中文和英文；任务导航界面当前以中文显示。
 
 ## 喜欢它？

@@ -12,6 +12,7 @@ import { useHeaderEntryTarget } from './hooks/use-header-entry-target.mjs';
 import { executionTarget } from './model.mjs';
 import { createToolOpeners } from './tool-openers.mjs';
 import { useCompactChecklist } from './hooks/use-compact-checklist.mjs';
+import { registerExecutionRecords } from './components/execution-record.jsx';
 
 export const inject = ['slots', 'sessions', 'connection'];
 export function createApi(connection) {
@@ -19,6 +20,7 @@ export function createApi(connection) {
   return { view: sessionId => call('taskflow/view', { sessionId }), action: (sessionId, action, data) => call('taskflow/action', { sessionId, action, ...data }) };
 }
 export function apply(ctx) {
+  registerExecutionRecords(ctx);
   const api = createApi(ctx.connection), renderers = new Map();
   const panels = new Map(), panelListeners = new Set();
   const updatePanel = (key, value) => { value ? panels.set(key, value) : panels.delete(key); panelListeners.forEach(fn => fn()); };

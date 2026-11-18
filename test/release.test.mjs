@@ -7,7 +7,7 @@ import { SUPPORTED_DSH_RANGE, HOST_BOUNDARIES } from '../scripts/check-release.m
 test('正式版声明、锁文件、peer 与宿主版本边界保持一致', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   const lock = JSON.parse(await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'));
-  assert.equal(pkg.version, '0.1.3');
+  assert.equal(pkg.version, '0.1.4');
   assert.equal(semver.prerelease(pkg.version), null);
   assert.equal(pkg.publishConfig.tag, 'latest');
   assert.equal(lock.version, pkg.version);

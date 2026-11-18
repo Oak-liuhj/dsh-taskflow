@@ -28,6 +28,8 @@ Terminal-generated files without structured output paths require
 Previews follow tool-panel resizing, floating and scrolling. Closing the tool view
 releases its own previews and preserves documents opened by the user. The header's
 Tasks button toggles the checklist; another active sidebar page switches to Tasks.
+Version **0.1.4** expands Taskflow execution records by default, including existing saved records. Inline records distinguish model calls, public model output, tool inputs and results. Available source metadata supplies the model, tool, duration and failure status. Stage reports describe the goal, actual operations, key findings or validation, and next step or blocker, with Markdown tables and code when helpful. Historical records remain intact and missing history is never fabricated.
+
 Execution progress and key findings stay in the current task's child session via
 `taskflow_progress`. Inline work writes to its record session; delegated work writes
 to its execution session. Final results are saved before notifying the direct parent.
@@ -36,7 +38,7 @@ The tool view keeps a compact header and fills its remaining height with documen
 
 ![Task navigation and conversation](https://raw.githubusercontent.com/Oak-liuhj/dsh-taskflow/main/docs/screenshots/desktop.png)
 
-*Historical development-shell screenshots (0.1.0-alpha.1), using a deterministic model to illustrate the layout. These are not full-host screenshots of 0.1.3. See the guide and [acceptance record](docs/acceptance.md) for the current behavior and validation scope.*
+*Historical development-shell screenshots (0.1.0-alpha.1), using a deterministic model to illustrate the layout. These are not full-host screenshots of the current version. See the guide and [acceptance record](docs/acceptance.md) for the current behavior and validation scope.*
 
 ## Install / Update
 
@@ -63,7 +65,7 @@ dsh plugin --profile web add dsh-taskflow@latest
 To pin the current version:
 
 ```sh
-dsh plugin --profile web add dsh-taskflow@0.1.3
+dsh plugin --profile web add dsh-taskflow@0.1.4
 ```
 
 Replace `web` with your profile name. For an npm-based installation, you can also recheck versions in the plugin details, choose a compatible update and follow the host's reload or restart instructions.

@@ -67,7 +67,7 @@ export class TaskRuntime {
           '先 taskflow_status 读取现有下级，按原 ID 继续未完成事项；保留完成记录，不重复规划。high 且 independent=true 的事项应委派；不要将其强制标为 inline。',
           `本次任务历史结果：${task.report?.summary ?? '无'}。现有下级：${JSON.stringify(children(plan, task.id).map(t => ({ id: t.id, status: t.status, report: t.report })))}`,
           '有下级事项时先用 taskflow_wait 等待其结果，再完成本层剩余工作。完成下级不代表你已完成。',
-          '实际执行过程、关键发现与阶段结果保留在当前子会话，通过 taskflow_progress 保存；不要把中间过程逐条发回父任务。最终结果保存到本子会话后，仅通知直接父任务完成摘要与证据。',
+          '实际执行过程、关键发现与阶段结果保留在当前子会话，通过 taskflow_progress 保存：写明本步目标、实际操作、关键发现或验证结果、下一步或阻塞原因，必要时附表格、代码片段和产物路径；只记录可观察事实，不用空泛状态代替。不要把中间过程逐条发回父任务。最终结果保存到本子会话后，仅通知直接父任务完成摘要与证据。',
           '最终返回结构化结果 {"status":"completed|blocked|failed","summary":"实际结果与证据"}。不需父会话复核。',
           '只能报告实际完成的工作；失败或缺少输入时返回 failed/blocked。不要调用原生委派工具绕过任务树。',
           `依赖结果：${JSON.stringify(task.dependsOn.map(id => ({ id, report: plan.tasks[id].report })))}`,

@@ -4,9 +4,11 @@
 
 dsh-market 本身是市场应用，[官方投稿说明](https://github.com/dsh-market/dsh-market#submit-your-plugin)要求向 `awesome-dsh-plugin/awesome-dsh-plugin` 提交目录条目；不向市场应用仓库 PR 插件条目。当前申请与检查见 [SUBMISSION.md](../marketplace/SUBMISSION.md)。
 
+当前源码候选版为 **0.1.4（未发布）**，用于子任务执行记录展示修复；本地构建、验证和安装不代表 npm 或市场条目已更新。
+
 ## 版本和兼容性
 
-- 插件版本：`0.1.3`；npm 发布标签：`latest`。
+- npm 已发布版本：`0.1.3`；npm 发布标签：`latest`。源码候选版本：`0.1.4`。
 - 宿主要求：`>=0.2.1-rc.3 <1.0.0-0 || >=0.2.2-0 <1.0.0-0 || >=0.2.3-0 <1.0.0-0 || >=0.3.0-0 <1.0.0-0`。
 - `engines.dsh` 与必需 DSH peer 范围一致；开发依赖保持 `0.2.2-rc.2` 基线。
 - DSH 检查采用 `includePrerelease: true`；`∩` 只用于解释范围交集，不得写入 SemVer 字段。

@@ -3,7 +3,7 @@ import { marked } from 'marked';
 
 const safeHref = href => { try { const u = new URL(href); return ['http:', 'https:', 'mailto:'].includes(u.protocol) && !u.username && !u.password ? href : null; } catch { return href.startsWith('#') ? href : null; } };
 // Parse Markdown into React nodes. Raw HTML is text; no HTML injection or remote images.
-export function MarkdownPreview({ text }) {
+export function MarkdownPreview({ text, label = 'Markdown 文档预览' }) {
   const nodes = useMemo(() => {
     const render = (tokens, depth = 0) => depth > 64 ? null : tokens.map((t, i) => {
       const inner = () => t.tokens ? render(t.tokens, depth + 1) : t.text;
@@ -28,5 +28,5 @@ export function MarkdownPreview({ text }) {
     });
     try { return render(marked.lexer(text, { gfm: true })); } catch { return <pre>{text}</pre>; }
   }, [text]);
-  return <article className="tf-markdown-preview" aria-label="Markdown 文档预览">{nodes}</article>;
+  return <article className="tf-markdown-preview" aria-label={label}>{nodes}</article>;
 }
